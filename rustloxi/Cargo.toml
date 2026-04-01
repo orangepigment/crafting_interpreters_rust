@@ -10,5 +10,3 @@ license-file = "../LICENSE"
 
 readme = "../README.md"
 description = "An implementation of A Tree-Walk Interpreter from \"Crafting Interpreters\" by Robert Nystrom"
-
-[dependencies]
