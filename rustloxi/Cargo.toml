@@ -1,0 +1,14 @@
+[package]
+name = "rustloxi"
+version = "0.1.0"
+edition = "2024"
+
+authors = [ "orangepigment <cadmium.orange@yandex.ru>" ]
+repository = "https://github.com/orangepigment/crafting_interpreters_rust"
+
+license-file = "../LICENSE"
+
+readme = "../README.md"
+description = "An implementation of A Tree-Walk Interpreter from \"Crafting Interpreters\" by Robert Nystrom"
+
+[dependencies]
