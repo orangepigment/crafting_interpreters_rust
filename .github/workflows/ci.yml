@@ -20,14 +20,11 @@ jobs:
               with:
                   repository: munificent/craftinginterpreters
                   path: ${{env.TEST_TOOLS_LOCATION}}
-                  # token: ${{ secrets.my_pat }}
             - uses: dtolnay/rust-toolchain@stable
             - uses: dart-lang/setup-dart@v1
+              with:
+                  sdk: 2.19.6
             - run: rustup update
+            - run: dart pub upgrade -C ${TEST_TOOLS_LOCATION}/tool
             - run: cargo build --verbose
             - run: cargo test --verbose
-            - run: make test_java
-            - run: |
-                  cargo --config "env.TEST_TOOLS_LOCATION='${TEST_TOOLS_LOCATION}'" \
-                  --config "env.SUITE_NAME='${SUITE_NAME}'" \
-                  test

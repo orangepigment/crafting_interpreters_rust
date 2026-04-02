@@ -9,7 +9,8 @@ For integrations tests to work properly you need to define the following environ
 
 To run tests use:
 ```sh
-cargo --config "env.TEST_TOOLS_LOCATION='${TEST_TOOLS_LOCATION}'" \
-  --config "env.SUITE_NAME='${SUITE_NAME}'" \
-  test
+export TEST_TOOLS_LOCATION="<path>/craftinginterpreters"
+export SUITE_NAME="<suite_name>"
+
+cargo test
 ```
