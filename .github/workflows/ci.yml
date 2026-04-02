@@ -1,0 +1,30 @@
+name: CI
+
+on:
+    push:
+    pull_request:
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    build_and_test:
+        runs-on: ubuntu-latest
+        env:
+            TEST_TOOLS_LOCATION: "${{github.workspace}}/craftinginterpreters"
+            SUITE_NAME: "chap04_scanning"
+        steps:
+            - uses: actions/checkout@v5
+            - name: Check out the original book repo
+              uses: actions/checkout@master
+              with:
+                  repository: munificent/craftinginterpreters
+                  path: ${{env.TEST_TOOLS_LOCATION}}
+            - uses: dtolnay/rust-toolchain@stable
+            - uses: dart-lang/setup-dart@v1
+              with:
+                  sdk: 2.19.6
+            - run: rustup update
+            - run: dart pub upgrade -C ${TEST_TOOLS_LOCATION}/tool
+            - run: cargo build --verbose
+            - run: cargo test --verbose
