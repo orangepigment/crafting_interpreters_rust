@@ -1,8 +1,8 @@
-mod models;
+pub mod models;
 
 use crate::{
     errors::{InterpreterError, Result},
-    scanner::models::{LiteralType, NonLiteralType, ScannerPosition, Token, TokenInfo},
+    scanner::models::{NonLiteralType, ScannerPosition, Token, TokenInfo},
 };
 
 // TODO: write tests at least for small helper methods?
@@ -205,7 +205,6 @@ fn string_token(pos: &ScannerPosition, source: &[char]) -> Result<(ScannerPositi
     loop {
         match peek(&pos, source) {
             '"' => break,
-            // FIX: early return is a code smell
             '\0' => {
                 return Err(InterpreterError::new(
                     pos.line,
@@ -223,13 +222,10 @@ fn string_token(pos: &ScannerPosition, source: &[char]) -> Result<(ScannerPositi
     // The closing "
     pos = advance(&pos, source).0;
 
-    let str_value: String = source[pos.start + 1..pos.current - 1].iter().collect();
-    let lexeme = format!("\"{str_value}\"");
+    let value: String = source[pos.start + 1..pos.current - 1].iter().collect();
+    let lexeme = format!("\"{value}\"");
     let token = TokenInfo {
-        token: Token::Literal {
-            tpe: LiteralType::Str { value: str_value },
-            lexeme,
-        },
+        token: Token::StrLiteral { lexeme, value },
         line: pos.line,
     };
 
@@ -260,15 +256,12 @@ fn number_token(pos: &ScannerPosition, source: &[char]) -> Result<(ScannerPositi
 
     let lexeme: String = source[pos.start..pos.current].iter().collect();
 
-    let num_value: f64 = lexeme.parse().map_err(|e: std::num::ParseFloatError| {
+    let value: f64 = lexeme.parse().map_err(|e: std::num::ParseFloatError| {
         InterpreterError::new(pos.line, String::from(""), e.to_string())
     })?;
 
     let token = TokenInfo {
-        token: Token::Literal {
-            tpe: LiteralType::Num { value: num_value },
-            lexeme,
-        },
+        token: Token::NumLiteral { lexeme, value },
         line: pos.line,
     };
 
@@ -289,7 +282,7 @@ fn identifier_token(
 
     let token = match NonLiteralType::try_from_word(text.as_str()) {
         Some(tpe) => Token::NonLiteral { tpe },
-        None => Token::identifier(text),
+        None => Token::Identifier { lexeme: text },
     };
 
     let token_info = TokenInfo {

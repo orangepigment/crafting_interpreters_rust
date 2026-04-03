@@ -1,5 +1,8 @@
 use std::fmt;
 
+// FIX: TokenInfo can be merged with Token into:
+// Token::NonLiteral(line, tpe) Token::Literal(line, tpe, lexeme)
+// Line can be accessed via a method
 #[derive(Debug)]
 pub struct TokenInfo {
     pub token: Token,
@@ -10,29 +13,9 @@ pub struct TokenInfo {
 pub enum Token {
     NonLiteral { tpe: NonLiteralType },
 
-    Literal { tpe: LiteralType, lexeme: String },
-}
-
-impl Token {
-    pub fn identifier(label: String) -> Token {
-        Token::Literal {
-            tpe: LiteralType::Identifier { value: None },
-            lexeme: label,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum LiteralType {
-    Str { value: String },
-    Num { value: f64 },
-    Identifier { value: Option<VariableValue> },
-}
-
-#[derive(Debug)]
-pub enum VariableValue {
-    Str { value: String },
-    Num { value: f64 },
+    StrLiteral { lexeme: String, value: String },
+    NumLiteral { lexeme: String, value: f64 },
+    Identifier { lexeme: String },
 }
 
 #[derive(Debug)]
@@ -49,6 +32,8 @@ pub enum NonLiteralType {
     Semicolon,
     Slash,
     Star,
+
+    //UnaryOp {op: UnaryOp},
 
     // One or two character tokens.
     Bang,
@@ -101,6 +86,47 @@ impl NonLiteralType {
             "var" => Some(NonLiteralType::Var),
             "while" => Some(NonLiteralType::While),
             _ => None,
+        }
+    }
+
+    fn tpe(&self) -> &str {
+        match &self {
+            NonLiteralType::LeftParen => "LEFT_PAREN",
+            NonLiteralType::RightParen => "RIGHT_PAREN",
+            NonLiteralType::LeftBrace => "LEFT_BRACE",
+            NonLiteralType::RightBrace => "RIGHT_BRACE",
+            NonLiteralType::Comma => "COMMA",
+            NonLiteralType::Dot => "DOT",
+            NonLiteralType::Minus => "MINUS",
+            NonLiteralType::Plus => "PLUS",
+            NonLiteralType::Semicolon => "SEMICOLON",
+            NonLiteralType::Slash => "SLASH",
+            NonLiteralType::Star => "STAR",
+            NonLiteralType::Bang => "BANG",
+            NonLiteralType::BangEqual => "BANG_EQUAL",
+            NonLiteralType::Equal => "EQUAL",
+            NonLiteralType::EqualEqual => "EQUAL_EQUAL",
+            NonLiteralType::Greater => "GREATER",
+            NonLiteralType::GreaterEqual => "GREATER_EQUAL",
+            NonLiteralType::Less => "LESS",
+            NonLiteralType::LessEqual => "LESS_EQUAL",
+            NonLiteralType::And => "AND",
+            NonLiteralType::Class => "CLASS",
+            NonLiteralType::Else => "ELSE",
+            NonLiteralType::False => "FALSE",
+            NonLiteralType::Fun => "FUN",
+            NonLiteralType::For => "FOR",
+            NonLiteralType::If => "IF",
+            NonLiteralType::Nil => "NIL",
+            NonLiteralType::Or => "OR",
+            NonLiteralType::Print => "PRINT",
+            NonLiteralType::Return => "RETURN",
+            NonLiteralType::Super => "SUPER",
+            NonLiteralType::This => "THIS",
+            NonLiteralType::True => "TRUE",
+            NonLiteralType::Var => "VAR",
+            NonLiteralType::While => "WHILE",
+            NonLiteralType::Eof => "EOF",
         }
     }
 }
@@ -216,64 +242,9 @@ impl Token {
             Token::NonLiteral {
                 tpe: NonLiteralType::Eof,
             } => "", // EOF lexeme is empty string
-            Token::Literal { tpe: _, lexeme } => lexeme.as_str(),
-        }
-    }
-}
-
-trait Tpe {
-    fn tpe(&self) -> &str;
-}
-
-impl Tpe for LiteralType {
-    fn tpe(&self) -> &str {
-        match &self {
-            LiteralType::Str { .. } => "STRING",
-            LiteralType::Num { .. } => "NUMBER",
-            LiteralType::Identifier { .. } => "IDENTIFIER",
-        }
-    }
-}
-
-impl Tpe for NonLiteralType {
-    fn tpe(&self) -> &str {
-        match &self {
-            NonLiteralType::LeftParen => "LEFT_PAREN",
-            NonLiteralType::RightParen => "RIGHT_PAREN",
-            NonLiteralType::LeftBrace => "LEFT_BRACE",
-            NonLiteralType::RightBrace => "RIGHT_BRACE",
-            NonLiteralType::Comma => "COMMA",
-            NonLiteralType::Dot => "DOT",
-            NonLiteralType::Minus => "MINUS",
-            NonLiteralType::Plus => "PLUS",
-            NonLiteralType::Semicolon => "SEMICOLON",
-            NonLiteralType::Slash => "SLASH",
-            NonLiteralType::Star => "STAR",
-            NonLiteralType::Bang => "BANG",
-            NonLiteralType::BangEqual => "BANG_EQUAL",
-            NonLiteralType::Equal => "EQUAL",
-            NonLiteralType::EqualEqual => "EQUAL_EQUAL",
-            NonLiteralType::Greater => "GREATER",
-            NonLiteralType::GreaterEqual => "GREATER_EQUAL",
-            NonLiteralType::Less => "LESS",
-            NonLiteralType::LessEqual => "LESS_EQUAL",
-            NonLiteralType::And => "AND",
-            NonLiteralType::Class => "CLASS",
-            NonLiteralType::Else => "ELSE",
-            NonLiteralType::False => "FALSE",
-            NonLiteralType::Fun => "FUN",
-            NonLiteralType::For => "FOR",
-            NonLiteralType::If => "IF",
-            NonLiteralType::Nil => "NIL",
-            NonLiteralType::Or => "OR",
-            NonLiteralType::Print => "PRINT",
-            NonLiteralType::Return => "RETURN",
-            NonLiteralType::Super => "SUPER",
-            NonLiteralType::This => "THIS",
-            NonLiteralType::True => "TRUE",
-            NonLiteralType::Var => "VAR",
-            NonLiteralType::While => "WHILE",
-            NonLiteralType::Eof => "EOF",
+            Token::StrLiteral { lexeme, value: _ } => lexeme.as_str(),
+            Token::NumLiteral { lexeme, value: _ } => lexeme.as_str(),
+            Token::Identifier { lexeme } => lexeme.as_str(),
         }
     }
 }
@@ -285,20 +256,14 @@ impl fmt::Display for Token {
             Token::NonLiteral { tpe } => {
                 write!(f, "{0} {1} null", tpe.tpe(), self.lexeme())
             }
-            Token::Literal { tpe, lexeme } => {
-                let literal = match tpe {
-                    LiteralType::Str { value } => value,
-                    LiteralType::Num { value } => &format!("{:?}", value),
-                    LiteralType::Identifier {
-                        value: Some(VariableValue::Str { value }),
-                    } => value,
-                    LiteralType::Identifier {
-                        value: Some(VariableValue::Num { value }),
-                    } => &format!("{:?}", value),
-                    LiteralType::Identifier { value: None } => "null",
-                };
-
-                write!(f, "{0} {1} {2}", tpe.tpe(), lexeme, literal)
+            Token::StrLiteral { lexeme, value } => {
+                write!(f, "STRING {lexeme} {value}")
+            }
+            Token::NumLiteral { lexeme, value } => {
+                write!(f, "NUMBER {lexeme} {value:?}")
+            }
+            Token::Identifier { lexeme } => {
+                write!(f, "IDENTIFIER {lexeme} null")
             }
         }
     }
