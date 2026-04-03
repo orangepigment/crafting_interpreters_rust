@@ -1,3 +1,4 @@
+mod ast;
 mod errors;
 mod scanner;
 
@@ -8,7 +9,7 @@ use std::{
 };
 
 fn run_file(filepath: &str) -> ExitCode {
-    let program = fs::read_to_string(filepath).expect("BOOOM");
+    let program = fs::read_to_string(filepath).expect("Failed to read the source file");
     run(program.as_str())
         .map(|_| ExitCode::SUCCESS)
         .inspect_err(|e| eprintln!("{e}"))
@@ -20,12 +21,12 @@ fn run_prompt() {
     loop {
         print!("> ");
         // Explicitly flush the standard output
-        io::stdout().flush().expect("BOOOM");
+        io::stdout().flush().unwrap();
 
         let mut command = String::new();
         stdin
             .read_line(&mut command)
-            .expect("Failed readline - HANDLE properly");
+            .expect("Failed to read user input...");
 
         let command = command.trim_end();
 
@@ -53,7 +54,7 @@ fn run(source: &str) -> errors::Result<()> {
 fn main() -> ExitCode {
     let mut args = std::env::args();
 
-    //There is at least 1 arg - programm name
+    //There is at least 1 arg - program name
     match args.len() {
         3.. => {
             println!("Usage: rustloxi [script]");
