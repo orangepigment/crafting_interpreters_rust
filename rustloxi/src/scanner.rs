@@ -2,7 +2,7 @@ pub mod models;
 
 use crate::{
     errors::{InterpreterError, Result},
-    scanner::models::{NonLiteralType, ScannerPosition, Token, TokenInfo},
+    scanner::models::{ScannerPosition, Token, TokenInfo},
 };
 
 // TODO: write tests at least for small helper methods?
@@ -28,9 +28,7 @@ pub fn scan_tokens(source: &str) -> Result<Vec<TokenInfo>> {
     }
 
     tokens.push(TokenInfo {
-        token: Token::NonLiteral {
-            tpe: NonLiteralType::Eof,
-        },
+        token: Token::Eof,
         line: pos.line,
     });
 
@@ -48,88 +46,87 @@ fn scan_token(
     let (pos, c) = advance(pos, source);
     match c {
         '(' => {
-            let token = build_non_literal_token(NonLiteralType::LeftParen, pos.line);
+            let token = TokenInfo::new(Token::LeftParen, pos.line);
             Ok((pos, Some(token)))
         }
         ')' => {
-            let token = build_non_literal_token(NonLiteralType::RightParen, pos.line);
+            let token = TokenInfo::new(Token::RightParen, pos.line);
             Ok((pos, Some(token)))
         }
         '{' => {
-            let token = build_non_literal_token(NonLiteralType::LeftBrace, pos.line);
+            let token = TokenInfo::new(Token::LeftBrace, pos.line);
             Ok((pos, Some(token)))
         }
         '}' => {
-            let token = build_non_literal_token(NonLiteralType::RightBrace, pos.line);
+            let token = TokenInfo::new(Token::RightBrace, pos.line);
             Ok((pos, Some(token)))
         }
         ',' => {
-            let token = build_non_literal_token(NonLiteralType::Comma, pos.line);
+            let token = TokenInfo::new(Token::Comma, pos.line);
             Ok((pos, Some(token)))
         }
         '.' => {
-            let token = build_non_literal_token(NonLiteralType::Dot, pos.line);
+            let token = TokenInfo::new(Token::Dot, pos.line);
             Ok((pos, Some(token)))
         }
         '-' => {
-            let token = build_non_literal_token(NonLiteralType::Minus, pos.line);
+            let token = TokenInfo::new(Token::Minus, pos.line);
             Ok((pos, Some(token)))
         }
         '+' => {
-            let token = build_non_literal_token(NonLiteralType::Plus, pos.line);
+            let token = TokenInfo::new(Token::Plus, pos.line);
             Ok((pos, Some(token)))
         }
         ';' => {
-            let token = build_non_literal_token(NonLiteralType::Semicolon, pos.line);
+            let token = TokenInfo::new(Token::Semicolon, pos.line);
             Ok((pos, Some(token)))
         }
         '*' => {
-            let token = build_non_literal_token(NonLiteralType::Star, pos.line);
+            let token = TokenInfo::new(Token::Star, pos.line);
             Ok((pos, Some(token)))
         }
         '!' => match advance_on_match(pos, source, '=') {
             (pos, true) => {
-                let token = build_non_literal_token(NonLiteralType::BangEqual, pos.line);
+                let token = TokenInfo::new(Token::BangEqual, pos.line);
                 Ok((pos, Some(token)))
             }
             (pos, false) => {
-                let token = build_non_literal_token(NonLiteralType::Bang, pos.line);
+                let token = TokenInfo::new(Token::Bang, pos.line);
                 Ok((pos, Some(token)))
             }
         },
         '=' => match advance_on_match(pos, source, '=') {
             (pos, true) => {
-                let token = build_non_literal_token(NonLiteralType::EqualEqual, pos.line);
+                let token = TokenInfo::new(Token::EqualEqual, pos.line);
                 Ok((pos, Some(token)))
             }
             (pos, false) => {
-                let token = build_non_literal_token(NonLiteralType::Equal, pos.line);
+                let token = TokenInfo::new(Token::Equal, pos.line);
                 Ok((pos, Some(token)))
             }
         },
         '<' => match advance_on_match(pos, source, '=') {
             (pos, true) => {
-                let token = build_non_literal_token(NonLiteralType::LessEqual, pos.line);
+                let token = TokenInfo::new(Token::LessEqual, pos.line);
                 Ok((pos, Some(token)))
             }
             (pos, false) => {
-                let token = build_non_literal_token(NonLiteralType::Less, pos.line);
+                let token = TokenInfo::new(Token::Less, pos.line);
                 Ok((pos, Some(token)))
             }
         },
         '>' => match advance_on_match(pos, source, '=') {
             (pos, true) => {
-                let token = build_non_literal_token(NonLiteralType::GreaterEqual, pos.line);
+                let token = TokenInfo::new(Token::GreaterEqual, pos.line);
                 Ok((pos, Some(token)))
             }
             (pos, false) => {
-                let token = build_non_literal_token(NonLiteralType::Greater, pos.line);
+                let token = TokenInfo::new(Token::Greater, pos.line);
                 Ok((pos, Some(token)))
             }
         },
         '/' => match advance_on_match(pos, source, '/') {
             (pos, true) => {
-                // FIX: comments are handled incorrectly
                 // A comment goes until the end of the line.
                 let mut pos = pos;
                 loop {
@@ -142,7 +139,7 @@ fn scan_token(
                 Ok((pos, None))
             }
             (pos, false) => {
-                let token = build_non_literal_token(NonLiteralType::Slash, pos.line);
+                let token = TokenInfo::new(Token::Slash, pos.line);
                 Ok((pos, Some(token)))
             }
         },
@@ -151,9 +148,8 @@ fn scan_token(
         '"' => string_token(&pos, source).map(|ps| (ps.0, Some(ps.1))),
         '0'..='9' => number_token(&pos, source).map(|ps| (ps.0, Some(ps.1))),
         'a'..='z' | 'A'..='Z' | '_' => identifier_token(&pos, source).map(|ps| (ps.0, Some(ps.1))),
-        unexpected => Err(InterpreterError::new(
+        unexpected => Err(InterpreterError::scanner_error(
             pos.line,
-            String::from(""),
             format!("Unexpected character '{unexpected}'"),
         )),
     }
@@ -191,14 +187,6 @@ fn peek_next(pos: &ScannerPosition, source: &[char]) -> char {
     }
 }
 
-// TODO: move to token impl. De-facto it is a factory method
-fn build_non_literal_token(tpe: NonLiteralType, line: u32) -> TokenInfo {
-    TokenInfo {
-        token: Token::NonLiteral { tpe },
-        line,
-    }
-}
-
 fn string_token(pos: &ScannerPosition, source: &[char]) -> Result<(ScannerPosition, TokenInfo)> {
     let mut pos = ScannerPosition { ..*pos };
 
@@ -206,9 +194,8 @@ fn string_token(pos: &ScannerPosition, source: &[char]) -> Result<(ScannerPositi
         match peek(&pos, source) {
             '"' => break,
             '\0' => {
-                return Err(InterpreterError::new(
+                return Err(InterpreterError::scanner_error(
                     pos.line,
-                    String::from(""),
                     String::from("Unterminated string."),
                 ));
             }
@@ -257,7 +244,7 @@ fn number_token(pos: &ScannerPosition, source: &[char]) -> Result<(ScannerPositi
     let lexeme: String = source[pos.start..pos.current].iter().collect();
 
     let value: f64 = lexeme.parse().map_err(|e: std::num::ParseFloatError| {
-        InterpreterError::new(pos.line, String::from(""), e.to_string())
+        InterpreterError::scanner_error(pos.line, e.to_string())
     })?;
 
     let token = TokenInfo {
@@ -280,10 +267,7 @@ fn identifier_token(
 
     let text: String = source[pos.start..pos.current].iter().collect();
 
-    let token = match NonLiteralType::try_from_word(text.as_str()) {
-        Some(tpe) => Token::NonLiteral { tpe },
-        None => Token::Identifier { lexeme: text },
-    };
+    let token = Token::try_from_word(text.as_str()).unwrap_or(Token::Identifier { lexeme: text });
 
     let token_info = TokenInfo {
         token,
