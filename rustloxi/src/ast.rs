@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use crate::errors::{InterpreterError, Result};
+use crate::scanner::models::{Token, TokenInfo};
 use rustloxi::VariableValue;
 
 // TODO: factory methods can be pub(super) to restrict usage only for parent parser module
@@ -28,6 +30,68 @@ pub enum Expr {
     Minus { left: Rc<Expr>, right: Rc<Expr> },
     Multiply { left: Rc<Expr>, right: Rc<Expr> },
     Divide { left: Rc<Expr>, right: Rc<Expr> },
+}
+
+impl Expr {
+    pub fn binary(left: Expr, operator: &TokenInfo, right: Expr) -> Result<Expr> {
+        match operator.token {
+            Token::EqualEqual => Ok(Expr::Equals {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::BangEqual => Ok(Expr::NotEquals {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::Greater => Ok(Expr::Greater {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::GreaterEqual => Ok(Expr::GreaterEquals {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::Less => Ok(Expr::Less {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::LessEqual => Ok(Expr::LessEquals {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::Minus => Ok(Expr::Minus {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::Plus => Ok(Expr::Plus {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::Star => Ok(Expr::Multiply {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            Token::Slash => Ok(Expr::Divide {
+                left: Rc::new(left),
+                right: Rc::new(right),
+            }),
+            _ => Err(InterpreterError::parser_error(
+                operator,
+                format!("'{}' is not a binary operator", operator.token.lexeme()),
+            )),
+        }
+    }
+
+    pub fn unary(operator: &TokenInfo, arg: Expr) -> Result<Expr> {
+        match operator.token {
+            Token::Bang => Ok(Expr::Not { expr: Rc::new(arg) }),
+            Token::Minus => Ok(Expr::Negative { expr: Rc::new(arg) }),
+            _ => Err(InterpreterError::parser_error(
+                operator,
+                format!("'{}' is not an unary operator", operator.token.lexeme()),
+            )),
+        }
+    }
 }
 
 pub fn render_ast(root: &Expr) -> String {
@@ -230,7 +294,10 @@ mod tests {
             }),
         };
 
-        assert_eq!(String::from("(* (- 123) (group 45.67))"), render_ast(&expr));
+        assert_eq!(
+            String::from("(* (- 123.0) (group 45.67))"),
+            render_ast(&expr)
+        );
         assert_eq!(String::from("nil"), render_ast(&Expr::Nil));
     }
 
@@ -256,7 +323,7 @@ mod tests {
         };
 
         assert_eq!(
-            String::from("1 2 + 4 3 - *"),
+            String::from("1.0 2.0 + 4.0 3.0 - *"),
             render_reverse_polish_notation(&expr).trim_end()
         );
     }
