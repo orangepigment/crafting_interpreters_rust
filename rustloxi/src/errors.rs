@@ -4,7 +4,6 @@ use crate::scanner::models::{Token, TokenInfo};
 
 pub type Result<T> = std::result::Result<T, InterpreterError>;
 
-// TODO: make constants for typical errors
 // Define our error types. These may be customized for our error handling cases.
 // Now we will be able to write our own errors, defer to an underlying error
 // implementation, or do something in between.
@@ -19,6 +18,11 @@ pub enum InterpreterError {
     ParserError {
         line: u32,
         location: String,
+        message: String,
+    },
+
+    RuntimeError {
+        line: u32,
         message: String,
     },
 }
@@ -40,6 +44,17 @@ impl InterpreterError {
             message,
         }
     }
+
+    pub fn runtime_error(line: u32, message: String) -> InterpreterError {
+        InterpreterError::RuntimeError { line, message }
+    }
+
+    pub fn operands_must_be_numbers_error(line: u32) -> InterpreterError {
+        InterpreterError::RuntimeError {
+            line,
+            message: String::from("Operands must be numbers."),
+        }
+    }
 }
 
 // Generation of an error is completely separate from how it is displayed.
@@ -59,6 +74,9 @@ impl fmt::Display for InterpreterError {
                 message,
             } => {
                 write!(f, "[line {line}] Error at {location}: {message}")
+            }
+            InterpreterError::RuntimeError { line, message } => {
+                write!(f, "{message}\n[line {line}]")
             }
         }
     }

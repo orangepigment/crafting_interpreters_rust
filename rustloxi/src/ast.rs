@@ -5,6 +5,7 @@ use crate::scanner::models::{Token, TokenInfo};
 use rustloxi::VariableValue;
 
 // TODO: factory methods can be pub(super) to restrict usage only for parent parser module
+// TODO: keep line number info inside expressions
 pub enum Expr {
     Grouping { expr: Rc<Expr> },
 
@@ -294,10 +295,7 @@ mod tests {
             }),
         };
 
-        assert_eq!(
-            String::from("(* (- 123.0) (group 45.67))"),
-            render_ast(&expr)
-        );
+        assert_eq!(String::from("(* (- 123) (group 45.67))"), render_ast(&expr));
         assert_eq!(String::from("nil"), render_ast(&Expr::Nil));
     }
 
@@ -323,7 +321,7 @@ mod tests {
         };
 
         assert_eq!(
-            String::from("1.0 2.0 + 4.0 3.0 - *"),
+            String::from("1 2 + 4 3 - *"),
             render_reverse_polish_notation(&expr).trim_end()
         );
     }
