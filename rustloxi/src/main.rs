@@ -1,5 +1,6 @@
 mod ast;
 mod errors;
+mod interpreter;
 mod parser;
 mod scanner;
 
@@ -9,7 +10,7 @@ use std::{
     process::ExitCode,
 };
 
-use crate::ast::render_ast;
+use crate::interpreter::interpret;
 
 fn run_file(filepath: &str) -> ExitCode {
     let program = fs::read_to_string(filepath).expect("Failed to read the source file");
@@ -48,7 +49,7 @@ fn run(source: &str) -> errors::Result<()> {
     let tokens = scanner::scan_tokens(source)?;
     let expr = parser::parse(&tokens)?;
 
-    println!("{}", render_ast(&expr));
+    interpret(&expr).inspect_err(|e| eprintln!("{e}")).ok();
 
     Ok(())
 }
