@@ -3,6 +3,7 @@ mod errors;
 mod interpreter;
 mod parser;
 mod scanner;
+mod state;
 
 use std::{
     fs,
@@ -17,7 +18,13 @@ fn run_file(filepath: &str) -> ExitCode {
     run(program.as_str())
         .map(|_| ExitCode::SUCCESS)
         .inspect_err(|e| eprintln!("{e}"))
-        .unwrap_or_else(|_| ExitCode::from(65))
+        .unwrap_or_else(|e| {
+            match e {
+                errors::InterpreterError::Scanner { .. } => ExitCode::from(65),
+                errors::InterpreterError::Parser { .. } => ExitCode::from(65),
+                errors::InterpreterError::Runtime { .. } => ExitCode::from(70),
+            }
+        })
 }
 
 fn run_prompt() {
@@ -47,11 +54,9 @@ fn run_prompt() {
 
 fn run(source: &str) -> errors::Result<()> {
     let tokens = scanner::scan_tokens(source)?;
-    let expr = parser::parse(&tokens)?;
+    let stmts = parser::parse(&tokens)?;
 
-    interpret(&expr).inspect_err(|e| eprintln!("{e}")).ok();
-
-    Ok(())
+    interpret(&stmts).inspect_err(|e| eprintln!("{e}"))
 }
 
 fn main() -> ExitCode {
@@ -64,8 +69,7 @@ fn main() -> ExitCode {
             ExitCode::from(64)
         }
         2 => {
-            run_file(args.nth(1).unwrap().as_str());
-            ExitCode::SUCCESS
+            run_file(args.nth(1).unwrap().as_str())
         }
         _ => {
             run_prompt();

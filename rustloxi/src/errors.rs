@@ -10,18 +10,18 @@ pub type Result<T> = std::result::Result<T, InterpreterError>;
 
 #[derive(Debug)]
 pub enum InterpreterError {
-    ScannerError {
+    Scanner {
         line: u32,
         message: String,
     },
 
-    ParserError {
+    Parser {
         line: u32,
         location: String,
         message: String,
     },
 
-    RuntimeError {
+    Runtime {
         line: u32,
         message: String,
     },
@@ -29,7 +29,7 @@ pub enum InterpreterError {
 
 impl InterpreterError {
     pub fn scanner_error(line: u32, message: String) -> InterpreterError {
-        Self::ScannerError { line, message }
+        Self::Scanner { line, message }
     }
 
     pub fn parser_error(token: &TokenInfo, message: String) -> InterpreterError {
@@ -38,7 +38,7 @@ impl InterpreterError {
             _ => format!("'{}'", token.token.lexeme()),
         };
 
-        Self::ParserError {
+        Self::Parser {
             line: token.line,
             location,
             message,
@@ -46,11 +46,11 @@ impl InterpreterError {
     }
 
     pub fn runtime_error(line: u32, message: String) -> InterpreterError {
-        InterpreterError::RuntimeError { line, message }
+        InterpreterError::Runtime { line, message }
     }
 
     pub fn operands_must_be_numbers_error(line: u32) -> InterpreterError {
-        InterpreterError::RuntimeError {
+        InterpreterError::Runtime {
             line,
             message: String::from("Operands must be numbers."),
         }
@@ -65,17 +65,17 @@ impl InterpreterError {
 impl fmt::Display for InterpreterError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self {
-            InterpreterError::ScannerError { line, message } => {
+            InterpreterError::Scanner { line, message } => {
                 write!(f, "[line {line}] Error: {message}")
             }
-            InterpreterError::ParserError {
+            InterpreterError::Parser {
                 line,
                 location,
                 message,
             } => {
                 write!(f, "[line {line}] Error at {location}: {message}")
             }
-            InterpreterError::RuntimeError { line, message } => {
+            InterpreterError::Runtime { line, message } => {
                 write!(f, "{message}\n[line {line}]")
             }
         }

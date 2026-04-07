@@ -1,80 +1,82 @@
-use std::rc::Rc;
-
 use crate::errors::{InterpreterError, Result};
-use crate::scanner::models::{Token, TokenInfo};
-use rustloxi::VariableValue;
+use crate::{
+    scanner::models::{Token, TokenInfo},
+    state::VariableValue,
+};
 
 // TODO: factory methods can be pub(super) to restrict usage only for parent parser module
 // TODO: keep line number info inside expressions
 pub enum Expr {
-    Grouping { expr: Rc<Expr> },
+    Grouping { expr: Box<Expr> },
 
     Literal { value: VariableValue },
     Nil,
+    Variable { name: String },
+    Assignment { name: String, value: Box<Expr> },
 
     // Unary
     // -a
-    Negative { expr: Rc<Expr> },
+    Negative { expr: Box<Expr> },
 
     // !a
-    Not { expr: Rc<Expr> },
+    Not { expr: Box<Expr> },
 
     //Binary
-    Equals { left: Rc<Expr>, right: Rc<Expr> },
-    NotEquals { left: Rc<Expr>, right: Rc<Expr> },
-    Less { left: Rc<Expr>, right: Rc<Expr> },
-    LessEquals { left: Rc<Expr>, right: Rc<Expr> },
-    Greater { left: Rc<Expr>, right: Rc<Expr> },
-    GreaterEquals { left: Rc<Expr>, right: Rc<Expr> },
+    Equals { left: Box<Expr>, right: Box<Expr> },
+    NotEquals { left: Box<Expr>, right: Box<Expr> },
+    Less { left: Box<Expr>, right: Box<Expr> },
+    LessEquals { left: Box<Expr>, right: Box<Expr> },
+    Greater { left: Box<Expr>, right: Box<Expr> },
+    GreaterEquals { left: Box<Expr>, right: Box<Expr> },
 
-    Plus { left: Rc<Expr>, right: Rc<Expr> },
-    Minus { left: Rc<Expr>, right: Rc<Expr> },
-    Multiply { left: Rc<Expr>, right: Rc<Expr> },
-    Divide { left: Rc<Expr>, right: Rc<Expr> },
+    Plus { left: Box<Expr>, right: Box<Expr> },
+    Minus { left: Box<Expr>, right: Box<Expr> },
+    Multiply { left: Box<Expr>, right: Box<Expr> },
+    Divide { left: Box<Expr>, right: Box<Expr> },
 }
 
 impl Expr {
     pub fn binary(left: Expr, operator: &TokenInfo, right: Expr) -> Result<Expr> {
         match operator.token {
             Token::EqualEqual => Ok(Expr::Equals {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::BangEqual => Ok(Expr::NotEquals {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::Greater => Ok(Expr::Greater {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::GreaterEqual => Ok(Expr::GreaterEquals {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::Less => Ok(Expr::Less {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::LessEqual => Ok(Expr::LessEquals {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::Minus => Ok(Expr::Minus {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::Plus => Ok(Expr::Plus {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::Star => Ok(Expr::Multiply {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             Token::Slash => Ok(Expr::Divide {
-                left: Rc::new(left),
-                right: Rc::new(right),
+                left: Box::new(left),
+                right: Box::new(right),
             }),
             _ => Err(InterpreterError::parser_error(
                 operator,
@@ -85,12 +87,23 @@ impl Expr {
 
     pub fn unary(operator: &TokenInfo, arg: Expr) -> Result<Expr> {
         match operator.token {
-            Token::Bang => Ok(Expr::Not { expr: Rc::new(arg) }),
-            Token::Minus => Ok(Expr::Negative { expr: Rc::new(arg) }),
+            Token::Bang => Ok(Expr::Not {
+                expr: Box::new(arg),
+            }),
+            Token::Minus => Ok(Expr::Negative {
+                expr: Box::new(arg),
+            }),
             _ => Err(InterpreterError::parser_error(
                 operator,
                 format!("'{}' is not an unary operator", operator.token.lexeme()),
             )),
+        }
+    }
+
+    pub fn assignment(name: String, value: Expr) -> Expr {
+        Expr::Assignment {
+            name,
+            value: Box::new(value),
         }
     }
 }
@@ -105,6 +118,11 @@ fn render_ast_loop(current_expr: &Expr, output: &mut String) {
     match current_expr {
         Expr::Literal { value } => output.push_str(value.to_string().as_str()),
         Expr::Nil => output.push_str("nil"),
+        Expr::Variable { name } => output.push_str(name),
+        Expr::Assignment { name, value } => {
+            output.push_str(&format!("(= {name}"));
+            render_ast_loop(value, output);
+        }
         Expr::Grouping { expr } => {
             output.push_str("(group ");
             render_ast_loop(expr, output);
@@ -203,6 +221,12 @@ fn render_reverse_polish_notation_loop(current_expr: &Expr, output: &mut String)
     match current_expr {
         Expr::Literal { value } => output.push_str(value.to_string().as_str()),
         Expr::Nil => output.push_str("nil"),
+        Expr::Variable { name } => output.push_str(name),
+        Expr::Assignment { name, value } => {
+            output.push_str(&format!(" {name} "));
+            output.push_str(" = ");
+            render_reverse_polish_notation_loop(value, output);
+        }
         Expr::Grouping { expr } => {
             render_reverse_polish_notation_loop(expr, output);
         }
@@ -276,6 +300,22 @@ fn render_reverse_polish_notation_loop(current_expr: &Expr, output: &mut String)
     }
 }
 
+pub enum Stmt {
+    Expr {
+        expr: Expr,
+    },
+    Print {
+        expr: Expr,
+    },
+    Var {
+        name: String,
+        initializer: Option<Expr>,
+    },
+    Block {
+        statements: Vec<Stmt>,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,13 +323,13 @@ mod tests {
     #[test]
     fn ast_rendering() {
         let expr = Expr::Multiply {
-            left: Rc::new(Expr::Negative {
-                expr: Rc::new(Expr::Literal {
+            left: Box::new(Expr::Negative {
+                expr: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 123_f64 },
                 }),
             }),
-            right: Rc::new(Expr::Grouping {
-                expr: Rc::new(Expr::Literal {
+            right: Box::new(Expr::Grouping {
+                expr: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 45.67 },
                 }),
             }),
@@ -302,19 +342,19 @@ mod tests {
     #[test]
     fn reverse_polish_notation() {
         let expr = Expr::Multiply {
-            left: Rc::new(Expr::Plus {
-                left: Rc::new(Expr::Literal {
+            left: Box::new(Expr::Plus {
+                left: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 1_f64 },
                 }),
-                right: Rc::new(Expr::Literal {
+                right: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 2_f64 },
                 }),
             }),
-            right: Rc::new(Expr::Minus {
-                left: Rc::new(Expr::Literal {
+            right: Box::new(Expr::Minus {
+                left: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 4_f64 },
                 }),
-                right: Rc::new(Expr::Literal {
+                right: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 3_f64 },
                 }),
             }),
