@@ -55,13 +55,13 @@ impl Environment {
         self.enclosing
     }
 
-    pub fn get(&self, name: &str) -> Result<&VariableValue> {
+    pub fn get(&self, name: &str, line: u32) -> Result<&VariableValue> {
         match self.values.get(name) {
             Some(value) => Ok(value),
             None => match &self.enclosing {
-                Some(env) => env.get(name),
+                Some(env) => env.get(name, line),
                 None => Err(InterpreterError::runtime_error(
-                    1,
+                    line,
                     format!("Undefined variable '{name}'."),
                 )),
             },
@@ -72,15 +72,15 @@ impl Environment {
         self.values.insert(name, value);
     }
 
-    pub fn assign(&mut self, name: String, value: VariableValue) -> Result<()> {
+    pub fn assign(&mut self, name: String, value: VariableValue, line: u32) -> Result<()> {
         if self.values.contains_key(&name) {
             self.values.insert(name, value);
             Ok(())
         } else {
             match &mut self.enclosing {
-                Some(env) => env.assign(name, value),
+                Some(env) => env.assign(name, value, line),
                 None => Err(InterpreterError::runtime_error(
-                    1,
+                    line,
                     format!("Undefined variable '{name}'."),
                 )),
             }

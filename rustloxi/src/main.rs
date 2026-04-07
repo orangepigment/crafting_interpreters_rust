@@ -18,12 +18,10 @@ fn run_file(filepath: &str) -> ExitCode {
     run(program.as_str())
         .map(|_| ExitCode::SUCCESS)
         .inspect_err(|e| eprintln!("{e}"))
-        .unwrap_or_else(|e| {
-            match e {
-                errors::InterpreterError::Scanner { .. } => ExitCode::from(65),
-                errors::InterpreterError::Parser { .. } => ExitCode::from(65),
-                errors::InterpreterError::Runtime { .. } => ExitCode::from(70),
-            }
+        .unwrap_or_else(|e| match e {
+            errors::InterpreterError::Scanner { .. } => ExitCode::from(65),
+            errors::InterpreterError::Parser { .. } => ExitCode::from(65),
+            errors::InterpreterError::Runtime { .. } => ExitCode::from(70),
         })
 }
 
@@ -68,9 +66,7 @@ fn main() -> ExitCode {
             println!("Usage: rustloxi [script]");
             ExitCode::from(64)
         }
-        2 => {
-            run_file(args.nth(1).unwrap().as_str())
-        }
+        2 => run_file(args.nth(1).unwrap().as_str()),
         _ => {
             run_prompt();
             ExitCode::SUCCESS

@@ -5,79 +5,40 @@ use crate::{
 };
 
 // TODO: factory methods can be pub(super) to restrict usage only for parent parser module
-// TODO: keep line number info inside expressions
-pub enum Expr {
-    Grouping { expr: Box<Expr> },
-
-    Literal { value: VariableValue },
-    Nil,
-    Variable { name: String },
-    Assignment { name: String, value: Box<Expr> },
-
-    // Unary
-    // -a
-    Negative { expr: Box<Expr> },
-
-    // !a
-    Not { expr: Box<Expr> },
-
-    //Binary
-    Equals { left: Box<Expr>, right: Box<Expr> },
-    NotEquals { left: Box<Expr>, right: Box<Expr> },
-    Less { left: Box<Expr>, right: Box<Expr> },
-    LessEquals { left: Box<Expr>, right: Box<Expr> },
-    Greater { left: Box<Expr>, right: Box<Expr> },
-    GreaterEquals { left: Box<Expr>, right: Box<Expr> },
-
-    Plus { left: Box<Expr>, right: Box<Expr> },
-    Minus { left: Box<Expr>, right: Box<Expr> },
-    Multiply { left: Box<Expr>, right: Box<Expr> },
-    Divide { left: Box<Expr>, right: Box<Expr> },
+pub struct ExprInfo {
+    pub expr: Box<Expr>,
+    pub line: u32,
 }
 
-impl Expr {
-    pub fn binary(left: Expr, operator: &TokenInfo, right: Expr) -> Result<Expr> {
+impl ExprInfo {
+    pub fn new(expr: Expr, line: u32) -> ExprInfo {
+        ExprInfo {
+            expr: Box::new(expr),
+            line,
+        }
+    }
+
+    pub fn binary(left: ExprInfo, operator: &TokenInfo, right: ExprInfo) -> Result<ExprInfo> {
         match operator.token {
-            Token::EqualEqual => Ok(Expr::Equals {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::BangEqual => Ok(Expr::NotEquals {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::Greater => Ok(Expr::Greater {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::GreaterEqual => Ok(Expr::GreaterEquals {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::Less => Ok(Expr::Less {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::LessEqual => Ok(Expr::LessEquals {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::Minus => Ok(Expr::Minus {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::Plus => Ok(Expr::Plus {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::Star => Ok(Expr::Multiply {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
-            Token::Slash => Ok(Expr::Divide {
-                left: Box::new(left),
-                right: Box::new(right),
-            }),
+            Token::EqualEqual => Ok(ExprInfo::new(Expr::Equals { left, right }, operator.line)),
+            Token::BangEqual => Ok(ExprInfo::new(
+                Expr::NotEquals { left, right },
+                operator.line,
+            )),
+            Token::Greater => Ok(ExprInfo::new(Expr::Greater { left, right }, operator.line)),
+            Token::GreaterEqual => Ok(ExprInfo::new(
+                Expr::GreaterEquals { left, right },
+                operator.line,
+            )),
+            Token::Less => Ok(ExprInfo::new(Expr::Less { left, right }, operator.line)),
+            Token::LessEqual => Ok(ExprInfo::new(
+                Expr::LessEquals { left, right },
+                operator.line,
+            )),
+            Token::Minus => Ok(ExprInfo::new(Expr::Minus { left, right }, operator.line)),
+            Token::Plus => Ok(ExprInfo::new(Expr::Plus { left, right }, operator.line)),
+            Token::Star => Ok(ExprInfo::new(Expr::Multiply { left, right }, operator.line)),
+            Token::Slash => Ok(ExprInfo::new(Expr::Divide { left, right }, operator.line)),
             _ => Err(InterpreterError::parser_error(
                 operator,
                 format!("'{}' is not a binary operator", operator.token.lexeme()),
@@ -85,14 +46,10 @@ impl Expr {
         }
     }
 
-    pub fn unary(operator: &TokenInfo, arg: Expr) -> Result<Expr> {
+    pub fn unary(operator: &TokenInfo, arg: ExprInfo) -> Result<ExprInfo> {
         match operator.token {
-            Token::Bang => Ok(Expr::Not {
-                expr: Box::new(arg),
-            }),
-            Token::Minus => Ok(Expr::Negative {
-                expr: Box::new(arg),
-            }),
+            Token::Bang => Ok(ExprInfo::new(Expr::Not { expr: arg }, operator.line)),
+            Token::Minus => Ok(ExprInfo::new(Expr::Negative { expr: arg }, operator.line)),
             _ => Err(InterpreterError::parser_error(
                 operator,
                 format!("'{}' is not an unary operator", operator.token.lexeme()),
@@ -100,15 +57,57 @@ impl Expr {
         }
     }
 
-    pub fn assignment(name: String, value: Expr) -> Expr {
-        Expr::Assignment {
-            name,
-            value: Box::new(value),
-        }
+    pub fn assignment(name: String, line: u32, value: ExprInfo) -> ExprInfo {
+        ExprInfo::new(Expr::Assignment { name, value }, line)
     }
 }
 
-pub fn render_ast(root: &Expr) -> String {
+pub enum Expr {
+    Grouping { expr: ExprInfo },
+
+    Literal { value: VariableValue },
+    Nil,
+    Variable { name: String },
+    Assignment { name: String, value: ExprInfo },
+
+    // Unary
+    // -a
+    Negative { expr: ExprInfo },
+
+    // !a
+    Not { expr: ExprInfo },
+
+    //Binary
+    Equals { left: ExprInfo, right: ExprInfo },
+    NotEquals { left: ExprInfo, right: ExprInfo },
+    Less { left: ExprInfo, right: ExprInfo },
+    LessEquals { left: ExprInfo, right: ExprInfo },
+    Greater { left: ExprInfo, right: ExprInfo },
+    GreaterEquals { left: ExprInfo, right: ExprInfo },
+
+    Plus { left: ExprInfo, right: ExprInfo },
+    Minus { left: ExprInfo, right: ExprInfo },
+    Multiply { left: ExprInfo, right: ExprInfo },
+    Divide { left: ExprInfo, right: ExprInfo },
+}
+
+pub enum Stmt {
+    Expr {
+        expr: ExprInfo,
+    },
+    Print {
+        expr: ExprInfo,
+    },
+    Var {
+        name: String,
+        initializer: Option<ExprInfo>,
+    },
+    Block {
+        statements: Vec<Stmt>,
+    },
+}
+
+/*pub fn render_ast(root: &Expr) -> String {
     let mut output = String::new();
     render_ast_loop(root, &mut output);
     output
@@ -300,22 +299,6 @@ fn render_reverse_polish_notation_loop(current_expr: &Expr, output: &mut String)
     }
 }
 
-pub enum Stmt {
-    Expr {
-        expr: Expr,
-    },
-    Print {
-        expr: Expr,
-    },
-    Var {
-        name: String,
-        initializer: Option<Expr>,
-    },
-    Block {
-        statements: Vec<Stmt>,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,4 +348,4 @@ mod tests {
             render_reverse_polish_notation(&expr).trim_end()
         );
     }
-}
+}*/

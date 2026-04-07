@@ -1,8 +1,5 @@
 use std::fmt;
 
-// FIX: TokenInfo can be merged with Token into:
-// Token::NonLiteral(line, tpe) Token::Literal(line, tpe, lexeme)
-// Line can be accessed via a method
 #[derive(Debug)]
 pub struct TokenInfo {
     pub token: Token,

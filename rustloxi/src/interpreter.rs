@@ -1,12 +1,11 @@
 use crate::errors::{InterpreterError, Result};
 
 use crate::{
-    ast::{Expr, Stmt},
+    ast::{Expr, ExprInfo, Stmt},
     state::{Environment, VariableValue},
 };
 
 pub fn interpret(stmts: &Vec<Stmt>) -> Result<()> {
-    //evaluate_expr(expr, env).inspect(|v| println!("{v}"))
     let mut env = Environment::new();
 
     for s in stmts {
@@ -35,7 +34,6 @@ fn execute_stmt(stmt: &Stmt, mut env: Environment) -> Result<Environment> {
 
             Ok(env)
         }
-        // TODO: swithc to RefCell for handling env?
         Stmt::Block { statements } => execute_block(statements, env.scope()),
     }
 }
@@ -52,27 +50,26 @@ fn execute_block(statements: &[Stmt], env: Environment) -> Result<Environment> {
         // In practice this error should never happen
         .ok_or(InterpreterError::runtime_error(
             1,
-            String::from("No paren environment in local scope"),
+            String::from("No parent environment in local scope"),
         ))
 }
 
-// FIX: fix to include actual line number instead of 1
-fn evaluate_expr(expr: &Expr, env: &mut Environment) -> Result<VariableValue> {
-    match expr {
+fn evaluate_expr(expr: &ExprInfo, env: &mut Environment) -> Result<VariableValue> {
+    match &*expr.expr {
         Expr::Grouping { expr } => evaluate_expr(expr, env),
         Expr::Literal { value } => Ok(value.clone()),
         Expr::Nil => Ok(VariableValue::Nil),
-        Expr::Variable { name } => env.get(name).cloned(),
+        Expr::Variable { name } => env.get(name, expr.line).cloned(),
         Expr::Assignment { name, value } => {
             let value = evaluate_expr(value, env)?;
-            env.assign(name.clone(), value.clone())?;
+            env.assign(name.clone(), value.clone(), expr.line)?;
 
             Ok(value)
         }
         Expr::Negative { expr } => match evaluate_expr(expr, env)? {
             VariableValue::Num { value } => Ok(VariableValue::Num { value: -value }),
             _ => Err(InterpreterError::runtime_error(
-                1,
+                expr.line,
                 String::from("Operand must be a number."),
             )),
         },
@@ -140,7 +137,7 @@ fn evaluate_expr(expr: &Expr, env: &mut Environment) -> Result<VariableValue> {
                 })
             }
             _ => Err(InterpreterError::runtime_error(
-                1,
+                expr.line,
                 String::from("Operands must be two numbers or two strings."),
             )),
         },
