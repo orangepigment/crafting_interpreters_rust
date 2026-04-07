@@ -7,23 +7,42 @@ use crate::{
     state::VariableValue,
 };
 
-// FIXME: now we need to report every error we encounter and continue execution after synchronise
-pub fn parse(tokens: &[TokenInfo]) -> Result<Vec<Stmt>> {
+pub fn parse(tokens: &[TokenInfo]) -> Option<Vec<Stmt>> {
+    let mut had_errors = false;
+
     let mut statements = Vec::new();
     let mut pos = 0;
     while !is_at_end(pos, tokens) {
-        let result = declaration(pos, tokens)?;
-        pos = result.0;
-        statements.push(result.1);
+        let result = declaration(pos, tokens);
+
+        match result {
+            Ok(res) => {
+                pos = res.0;
+                statements.push(res.1);
+            }
+            Err(
+                e @ InterpreterError::Parser {
+                    line: _,
+                    pos: err_pos,
+                    location: _,
+                    message: _,
+                },
+            ) => {
+                had_errors = true;
+                eprintln!("{e}");
+
+                pos = synchronize(err_pos, tokens);
+            }
+            _ => unreachable!(),
+        };
     }
 
-    Ok(statements)
+    if had_errors { None } else { Some(statements) }
 }
 
 fn declaration(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Var)]);
 
-    // TODO: on error - synchronize()
     if has_advanced {
         var_declaration(pos, tokens)
     } else {
@@ -325,6 +344,7 @@ fn assignment(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
         match *expr.expr {
             Expr::Variable { name } => Ok((pos, ExprInfo::assignment(name, expr.line, value))),
             _ => Err(InterpreterError::parser_error(
+                pos,
                 equals_token,
                 String::from("Invalid assignment target."),
             )),
@@ -348,7 +368,7 @@ fn logic_or(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
             let comparison_result = logic_and(pos, tokens)?;
             pos = comparison_result.0;
             let right = comparison_result.1;
-            expr = ExprInfo::binary(expr, operator, right)?;
+            expr = ExprInfo::binary(pos, expr, operator, right)?;
         } else {
             break Ok((pos, expr));
         }
@@ -369,7 +389,7 @@ fn logic_and(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
             let comparison_result = equality(pos, tokens)?;
             pos = comparison_result.0;
             let right = comparison_result.1;
-            expr = ExprInfo::binary(expr, operator, right)?;
+            expr = ExprInfo::binary(pos, expr, operator, right)?;
         } else {
             break Ok((pos, expr));
         }
@@ -397,7 +417,7 @@ fn equality(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
             let comparison_result = comparison(pos, tokens)?;
             pos = comparison_result.0;
             let right = comparison_result.1;
-            expr = ExprInfo::binary(expr, operator, right)?;
+            expr = ExprInfo::binary(pos, expr, operator, right)?;
         } else {
             break Ok((pos, expr));
         }
@@ -427,7 +447,7 @@ fn comparison(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
             let comparison_result = comparison(pos, tokens)?;
             pos = comparison_result.0;
             let right = comparison_result.1;
-            expr = ExprInfo::binary(expr, operator, right)?;
+            expr = ExprInfo::binary(pos, expr, operator, right)?;
         } else {
             break Ok((pos, expr));
         }
@@ -452,7 +472,7 @@ fn term(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
             let comparison_result = comparison(pos, tokens)?;
             pos = comparison_result.0;
             let right = comparison_result.1;
-            expr = ExprInfo::binary(expr, operator, right)?;
+            expr = ExprInfo::binary(pos, expr, operator, right)?;
         } else {
             break Ok((pos, expr));
         }
@@ -477,7 +497,7 @@ fn factor(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
             let comparison_result = comparison(pos, tokens)?;
             pos = comparison_result.0;
             let right = comparison_result.1;
-            expr = ExprInfo::binary(expr, operator, right)?;
+            expr = ExprInfo::binary(pos, expr, operator, right)?;
         } else {
             break Ok((pos, expr));
         }
@@ -495,7 +515,7 @@ fn unary(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
         let operator = previous(pos, tokens);
         let (pos, arg) = unary(pos, tokens)?;
 
-        ExprInfo::unary(operator, arg).map(|expr| (pos, expr))
+        ExprInfo::unary(pos, operator, arg).map(|expr| (pos, expr))
     } else {
         primary(pos, tokens)
     }
@@ -597,6 +617,7 @@ fn primary(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
     }
 
     Err(InterpreterError::parser_error(
+        pos,
         peek(pos, tokens),
         String::from("Expect expression."),
     ))
@@ -612,6 +633,7 @@ fn consume(
         Ok(advance(pos, tokens))
     } else {
         Err(InterpreterError::parser_error(
+            pos,
             peek(pos, tokens),
             error_message,
         ))

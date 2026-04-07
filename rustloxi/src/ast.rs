@@ -18,7 +18,12 @@ impl ExprInfo {
         }
     }
 
-    pub fn binary(left: ExprInfo, operator: &TokenInfo, right: ExprInfo) -> Result<ExprInfo> {
+    pub fn binary(
+        pos: usize,
+        left: ExprInfo,
+        operator: &TokenInfo,
+        right: ExprInfo,
+    ) -> Result<ExprInfo> {
         match operator.token {
             Token::EqualEqual => Ok(ExprInfo::new(Expr::Equals { left, right }, operator.line)),
             Token::BangEqual => Ok(ExprInfo::new(
@@ -42,17 +47,19 @@ impl ExprInfo {
             Token::Or => Ok(ExprInfo::new(Expr::Or { left, right }, operator.line)),
             Token::And => Ok(ExprInfo::new(Expr::And { left, right }, operator.line)),
             _ => Err(InterpreterError::parser_error(
+                pos,
                 operator,
                 format!("'{}' is not a binary operator", operator.token.lexeme()),
             )),
         }
     }
 
-    pub fn unary(operator: &TokenInfo, arg: ExprInfo) -> Result<ExprInfo> {
+    pub fn unary(pos: usize, operator: &TokenInfo, arg: ExprInfo) -> Result<ExprInfo> {
         match operator.token {
             Token::Bang => Ok(ExprInfo::new(Expr::Not { expr: arg }, operator.line)),
             Token::Minus => Ok(ExprInfo::new(Expr::Negative { expr: arg }, operator.line)),
             _ => Err(InterpreterError::parser_error(
+                pos,
                 operator,
                 format!("'{}' is not an unary operator", operator.token.lexeme()),
             )),
