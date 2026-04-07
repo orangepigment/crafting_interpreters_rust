@@ -1,81 +1,44 @@
-use std::rc::Rc;
-
 use crate::errors::{InterpreterError, Result};
-use crate::scanner::models::{Token, TokenInfo};
-use rustloxi::VariableValue;
+use crate::{
+    scanner::models::{Token, TokenInfo},
+    state::VariableValue,
+};
 
 // TODO: factory methods can be pub(super) to restrict usage only for parent parser module
-// TODO: keep line number info inside expressions
-pub enum Expr {
-    Grouping { expr: Rc<Expr> },
-
-    Literal { value: VariableValue },
-    Nil,
-
-    // Unary
-    // -a
-    Negative { expr: Rc<Expr> },
-
-    // !a
-    Not { expr: Rc<Expr> },
-
-    //Binary
-    Equals { left: Rc<Expr>, right: Rc<Expr> },
-    NotEquals { left: Rc<Expr>, right: Rc<Expr> },
-    Less { left: Rc<Expr>, right: Rc<Expr> },
-    LessEquals { left: Rc<Expr>, right: Rc<Expr> },
-    Greater { left: Rc<Expr>, right: Rc<Expr> },
-    GreaterEquals { left: Rc<Expr>, right: Rc<Expr> },
-
-    Plus { left: Rc<Expr>, right: Rc<Expr> },
-    Minus { left: Rc<Expr>, right: Rc<Expr> },
-    Multiply { left: Rc<Expr>, right: Rc<Expr> },
-    Divide { left: Rc<Expr>, right: Rc<Expr> },
+pub struct ExprInfo {
+    pub expr: Box<Expr>,
+    pub line: u32,
 }
 
-impl Expr {
-    pub fn binary(left: Expr, operator: &TokenInfo, right: Expr) -> Result<Expr> {
+impl ExprInfo {
+    pub fn new(expr: Expr, line: u32) -> ExprInfo {
+        ExprInfo {
+            expr: Box::new(expr),
+            line,
+        }
+    }
+
+    pub fn binary(left: ExprInfo, operator: &TokenInfo, right: ExprInfo) -> Result<ExprInfo> {
         match operator.token {
-            Token::EqualEqual => Ok(Expr::Equals {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::BangEqual => Ok(Expr::NotEquals {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::Greater => Ok(Expr::Greater {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::GreaterEqual => Ok(Expr::GreaterEquals {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::Less => Ok(Expr::Less {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::LessEqual => Ok(Expr::LessEquals {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::Minus => Ok(Expr::Minus {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::Plus => Ok(Expr::Plus {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::Star => Ok(Expr::Multiply {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
-            Token::Slash => Ok(Expr::Divide {
-                left: Rc::new(left),
-                right: Rc::new(right),
-            }),
+            Token::EqualEqual => Ok(ExprInfo::new(Expr::Equals { left, right }, operator.line)),
+            Token::BangEqual => Ok(ExprInfo::new(
+                Expr::NotEquals { left, right },
+                operator.line,
+            )),
+            Token::Greater => Ok(ExprInfo::new(Expr::Greater { left, right }, operator.line)),
+            Token::GreaterEqual => Ok(ExprInfo::new(
+                Expr::GreaterEquals { left, right },
+                operator.line,
+            )),
+            Token::Less => Ok(ExprInfo::new(Expr::Less { left, right }, operator.line)),
+            Token::LessEqual => Ok(ExprInfo::new(
+                Expr::LessEquals { left, right },
+                operator.line,
+            )),
+            Token::Minus => Ok(ExprInfo::new(Expr::Minus { left, right }, operator.line)),
+            Token::Plus => Ok(ExprInfo::new(Expr::Plus { left, right }, operator.line)),
+            Token::Star => Ok(ExprInfo::new(Expr::Multiply { left, right }, operator.line)),
+            Token::Slash => Ok(ExprInfo::new(Expr::Divide { left, right }, operator.line)),
             _ => Err(InterpreterError::parser_error(
                 operator,
                 format!("'{}' is not a binary operator", operator.token.lexeme()),
@@ -83,19 +46,68 @@ impl Expr {
         }
     }
 
-    pub fn unary(operator: &TokenInfo, arg: Expr) -> Result<Expr> {
+    pub fn unary(operator: &TokenInfo, arg: ExprInfo) -> Result<ExprInfo> {
         match operator.token {
-            Token::Bang => Ok(Expr::Not { expr: Rc::new(arg) }),
-            Token::Minus => Ok(Expr::Negative { expr: Rc::new(arg) }),
+            Token::Bang => Ok(ExprInfo::new(Expr::Not { expr: arg }, operator.line)),
+            Token::Minus => Ok(ExprInfo::new(Expr::Negative { expr: arg }, operator.line)),
             _ => Err(InterpreterError::parser_error(
                 operator,
                 format!("'{}' is not an unary operator", operator.token.lexeme()),
             )),
         }
     }
+
+    pub fn assignment(name: String, line: u32, value: ExprInfo) -> ExprInfo {
+        ExprInfo::new(Expr::Assignment { name, value }, line)
+    }
 }
 
-pub fn render_ast(root: &Expr) -> String {
+pub enum Expr {
+    Grouping { expr: ExprInfo },
+
+    Literal { value: VariableValue },
+    Nil,
+    Variable { name: String },
+    Assignment { name: String, value: ExprInfo },
+
+    // Unary
+    // -a
+    Negative { expr: ExprInfo },
+
+    // !a
+    Not { expr: ExprInfo },
+
+    //Binary
+    Equals { left: ExprInfo, right: ExprInfo },
+    NotEquals { left: ExprInfo, right: ExprInfo },
+    Less { left: ExprInfo, right: ExprInfo },
+    LessEquals { left: ExprInfo, right: ExprInfo },
+    Greater { left: ExprInfo, right: ExprInfo },
+    GreaterEquals { left: ExprInfo, right: ExprInfo },
+
+    Plus { left: ExprInfo, right: ExprInfo },
+    Minus { left: ExprInfo, right: ExprInfo },
+    Multiply { left: ExprInfo, right: ExprInfo },
+    Divide { left: ExprInfo, right: ExprInfo },
+}
+
+pub enum Stmt {
+    Expr {
+        expr: ExprInfo,
+    },
+    Print {
+        expr: ExprInfo,
+    },
+    Var {
+        name: String,
+        initializer: Option<ExprInfo>,
+    },
+    Block {
+        statements: Vec<Stmt>,
+    },
+}
+
+/*pub fn render_ast(root: &Expr) -> String {
     let mut output = String::new();
     render_ast_loop(root, &mut output);
     output
@@ -105,6 +117,11 @@ fn render_ast_loop(current_expr: &Expr, output: &mut String) {
     match current_expr {
         Expr::Literal { value } => output.push_str(value.to_string().as_str()),
         Expr::Nil => output.push_str("nil"),
+        Expr::Variable { name } => output.push_str(name),
+        Expr::Assignment { name, value } => {
+            output.push_str(&format!("(= {name}"));
+            render_ast_loop(value, output);
+        }
         Expr::Grouping { expr } => {
             output.push_str("(group ");
             render_ast_loop(expr, output);
@@ -203,6 +220,12 @@ fn render_reverse_polish_notation_loop(current_expr: &Expr, output: &mut String)
     match current_expr {
         Expr::Literal { value } => output.push_str(value.to_string().as_str()),
         Expr::Nil => output.push_str("nil"),
+        Expr::Variable { name } => output.push_str(name),
+        Expr::Assignment { name, value } => {
+            output.push_str(&format!(" {name} "));
+            output.push_str(" = ");
+            render_reverse_polish_notation_loop(value, output);
+        }
         Expr::Grouping { expr } => {
             render_reverse_polish_notation_loop(expr, output);
         }
@@ -283,13 +306,13 @@ mod tests {
     #[test]
     fn ast_rendering() {
         let expr = Expr::Multiply {
-            left: Rc::new(Expr::Negative {
-                expr: Rc::new(Expr::Literal {
+            left: Box::new(Expr::Negative {
+                expr: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 123_f64 },
                 }),
             }),
-            right: Rc::new(Expr::Grouping {
-                expr: Rc::new(Expr::Literal {
+            right: Box::new(Expr::Grouping {
+                expr: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 45.67 },
                 }),
             }),
@@ -302,19 +325,19 @@ mod tests {
     #[test]
     fn reverse_polish_notation() {
         let expr = Expr::Multiply {
-            left: Rc::new(Expr::Plus {
-                left: Rc::new(Expr::Literal {
+            left: Box::new(Expr::Plus {
+                left: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 1_f64 },
                 }),
-                right: Rc::new(Expr::Literal {
+                right: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 2_f64 },
                 }),
             }),
-            right: Rc::new(Expr::Minus {
-                left: Rc::new(Expr::Literal {
+            right: Box::new(Expr::Minus {
+                left: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 4_f64 },
                 }),
-                right: Rc::new(Expr::Literal {
+                right: Box::new(Expr::Literal {
                     value: VariableValue::Num { value: 3_f64 },
                 }),
             }),
@@ -325,4 +348,4 @@ mod tests {
             render_reverse_polish_notation(&expr).trim_end()
         );
     }
-}
+}*/
