@@ -82,6 +82,21 @@ fn statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
         return block_statement(pos, tokens);
     };
 
+    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::If)]);
+    if has_advanced {
+        return if_statement(pos, tokens);
+    };
+
+    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::While)]);
+    if has_advanced {
+        return while_statement(pos, tokens);
+    };
+
+    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::For)]);
+    if has_advanced {
+        return for_statement(pos, tokens);
+    };
+
     expr_statement(pos, tokens)
 }
 
@@ -121,6 +136,165 @@ fn block_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     Ok((pos, Stmt::Block { statements }))
 }
 
+fn if_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::LeftParen),
+        String::from("Expect '(' after 'if'."),
+    )?
+    .0;
+
+    let (pos, cond) = expression(pos, tokens)?;
+
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::RightParen),
+        String::from("Expect ')' after if condition."),
+    )?
+    .0;
+
+    let (pos, then_branch) = statement(pos, tokens)?;
+
+    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Else)]);
+
+    let (pos, else_branch) = if has_advanced {
+        statement(pos, tokens).map(|r| (r.0, Some(r.1)))?
+    } else {
+        (pos, None)
+    };
+
+    Ok((
+        pos,
+        Stmt::If {
+            condition: cond,
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(Box::new),
+        },
+    ))
+}
+
+fn while_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::LeftParen),
+        String::from("Expect '(' after 'while'."),
+    )?
+    .0;
+
+    let (pos, expr) = expression(pos, tokens)?;
+
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::RightParen),
+        String::from("Expect ')' after while condition."),
+    )?
+    .0;
+
+    let (pos, stmt) = statement(pos, tokens)?;
+
+    Ok((
+        pos,
+        Stmt::While {
+            condition: expr,
+            stmt: Box::new(stmt),
+        },
+    ))
+}
+
+fn for_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::LeftParen),
+        String::from("Expect '(' after 'for'."),
+    )?
+    .0;
+
+    let initializer: Option<Stmt>;
+
+    let (mut pos, has_advanced) =
+        advance_on_match(pos, tokens, vec![discriminant(&Token::Semicolon)]);
+    if has_advanced {
+        initializer = None;
+    } else {
+        let (inner_pos, has_advanced) =
+            advance_on_match(pos, tokens, vec![discriminant(&Token::Var)]);
+        if has_advanced {
+            let result = var_declaration(inner_pos, tokens)?;
+
+            pos = result.0;
+            initializer = Some(result.1);
+        } else {
+            let result = expr_statement(inner_pos, tokens)?;
+
+            pos = result.0;
+            initializer = Some(result.1);
+        }
+    }
+
+    let (pos, condition) = if !check(pos, tokens, discriminant(&Token::Semicolon)) {
+        expression(pos, tokens).map(|e| (e.0, Some(e.1)))?
+    } else {
+        (pos, None)
+    };
+    let condition_line = peek(pos, tokens).line;
+
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::Semicolon),
+        String::from("Expect ';' after loop condition."),
+    )?
+    .0;
+
+    let (pos, increment) = if !check(pos, tokens, discriminant(&Token::RightParen)) {
+        expression(pos, tokens).map(|e| (e.0, Some(e.1)))?
+    } else {
+        (pos, None)
+    };
+
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::RightParen),
+        String::from("Expect ')' after for clauses."),
+    )?
+    .0;
+
+    let (pos, mut body) = statement(pos, tokens)?;
+
+    // Desugaring For Loop to While Loop
+    if let Some(incr) = increment {
+        body = Stmt::Block {
+            statements: vec![body, Stmt::Expr { expr: incr }],
+        }
+    }
+
+    let condition = condition.unwrap_or(ExprInfo::new(
+        Expr::Literal {
+            value: VariableValue::Boolean { value: true },
+        },
+        condition_line,
+    ));
+
+    body = Stmt::While {
+        condition,
+        stmt: Box::new(body),
+    };
+
+    if let Some(init) = initializer {
+        body = Stmt::Block {
+            statements: vec![init, body],
+        }
+    }
+
+    Ok((pos, body))
+}
+
 fn expr_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     let (pos, expr) = expression(pos, tokens)?;
 
@@ -140,7 +314,7 @@ fn expression(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
 }
 
 fn assignment(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (pos, expr) = equality(pos, tokens)?;
+    let (pos, expr) = logic_or(pos, tokens)?;
 
     let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Equal)]);
 
@@ -157,6 +331,48 @@ fn assignment(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
         }
     } else {
         Ok((pos, expr))
+    }
+}
+
+fn logic_or(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
+    let (mut pos, mut expr) = logic_and(pos, tokens)?;
+
+    loop {
+        let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::Or)]);
+
+        pos = advance_result.0;
+        let has_advanced = advance_result.1;
+
+        if has_advanced {
+            let operator = previous(pos, tokens);
+            let comparison_result = logic_and(pos, tokens)?;
+            pos = comparison_result.0;
+            let right = comparison_result.1;
+            expr = ExprInfo::binary(expr, operator, right)?;
+        } else {
+            break Ok((pos, expr));
+        }
+    }
+}
+
+fn logic_and(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
+    let (mut pos, mut expr) = equality(pos, tokens)?;
+
+    loop {
+        let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::And)]);
+
+        pos = advance_result.0;
+        let has_advanced = advance_result.1;
+
+        if has_advanced {
+            let operator = previous(pos, tokens);
+            let comparison_result = equality(pos, tokens)?;
+            pos = comparison_result.0;
+            let right = comparison_result.1;
+            expr = ExprInfo::binary(expr, operator, right)?;
+        } else {
+            break Ok((pos, expr));
+        }
     }
 }
 

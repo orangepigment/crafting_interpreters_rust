@@ -230,14 +230,14 @@ fn number_token(pos: &ScannerPosition, source: &[char]) -> Result<(ScannerPositi
     // if-let with guards will be shipped in Rust 1.95
     // peek(&pos, source) if let '0'..='9' = peek_next(&pos, source)
 
-    if peek(&pos, source) == '.' {
-        if let '0'..='9' = peek_next(&pos, source) {
-            // Consume the "."
-            pos = advance(&pos, source).0;
+    if peek(&pos, source) == '.'
+        && let '0'..='9' = peek_next(&pos, source)
+    {
+        // Consume the "."
+        pos = advance(&pos, source).0;
 
-            while let '0'..='9' = peek(&pos, source) {
-                pos = advance(&pos, source).0;
-            }
+        while let '0'..='9' = peek(&pos, source) {
+            pos = advance(&pos, source).0;
         }
     }
 
