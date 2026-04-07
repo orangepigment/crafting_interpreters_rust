@@ -35,6 +35,33 @@ fn execute_stmt(stmt: &Stmt, mut env: Environment) -> Result<Environment> {
             Ok(env)
         }
         Stmt::Block { statements } => execute_block(statements, env.scope()),
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let cond_res = evaluate_expr(condition, &mut env)?;
+
+            if cond_res.is_truthy() {
+                execute_stmt(then_branch, env)
+            } else {
+                match else_branch {
+                    Some(else_br) => execute_stmt(else_br, env),
+                    None => Ok(env),
+                }
+            }
+        }
+        Stmt::While {
+            condition: expr,
+            stmt,
+        } => {
+            let mut env = env;
+            while evaluate_expr(expr, &mut env)?.is_truthy() {
+                env = execute_stmt(stmt, env)?;
+            }
+
+            Ok(env)
+        }
     }
 }
 
@@ -169,6 +196,24 @@ fn evaluate_expr(expr: &ExprInfo, env: &mut Environment) -> Result<VariableValue
                     })
                 }
                 _ => Err(InterpreterError::operands_must_be_numbers_error(1)),
+            }
+        }
+        Expr::Or { left, right } => {
+            let left = evaluate_expr(left, env)?;
+
+            if left.is_truthy() {
+                Ok(left)
+            } else {
+                evaluate_expr(right, env)
+            }
+        }
+        Expr::And { left, right } => {
+            let left = evaluate_expr(left, env)?;
+
+            if !left.is_truthy() {
+                Ok(left)
+            } else {
+                evaluate_expr(right, env)
             }
         }
     }

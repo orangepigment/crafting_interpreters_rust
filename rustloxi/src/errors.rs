@@ -17,6 +17,7 @@ pub enum InterpreterError {
 
     Parser {
         line: u32,
+        pos: usize,
         location: String,
         message: String,
     },
@@ -32,7 +33,7 @@ impl InterpreterError {
         Self::Scanner { line, message }
     }
 
-    pub fn parser_error(token: &TokenInfo, message: String) -> InterpreterError {
+    pub fn parser_error(pos: usize, token: &TokenInfo, message: String) -> InterpreterError {
         let location = match token.token {
             Token::Eof => String::from("end"),
             _ => format!("'{}'", token.token.lexeme()),
@@ -40,6 +41,7 @@ impl InterpreterError {
 
         Self::Parser {
             line: token.line,
+            pos,
             location,
             message,
         }
@@ -70,6 +72,7 @@ impl fmt::Display for InterpreterError {
             }
             InterpreterError::Parser {
                 line,
+                pos: _,
                 location,
                 message,
             } => {

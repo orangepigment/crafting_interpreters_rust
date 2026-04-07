@@ -16,13 +16,6 @@ use crate::interpreter::interpret;
 fn run_file(filepath: &str) -> ExitCode {
     let program = fs::read_to_string(filepath).expect("Failed to read the source file");
     run(program.as_str())
-        .map(|_| ExitCode::SUCCESS)
-        .inspect_err(|e| eprintln!("{e}"))
-        .unwrap_or_else(|e| match e {
-            errors::InterpreterError::Scanner { .. } => ExitCode::from(65),
-            errors::InterpreterError::Parser { .. } => ExitCode::from(65),
-            errors::InterpreterError::Runtime { .. } => ExitCode::from(70),
-        })
 }
 
 fn run_prompt() {
@@ -43,18 +36,29 @@ fn run_prompt() {
             println!("Bye-bye!");
             break;
         } else {
-            if let Err(e) = run(command) {
-                eprintln!("{e}");
-            }
+            run(command);
         }
     }
 }
 
-fn run(source: &str) -> errors::Result<()> {
-    let tokens = scanner::scan_tokens(source)?;
-    let stmts = parser::parse(&tokens)?;
+fn run(source: &str) -> ExitCode {
+    let Ok(tokens) = scanner::scan_tokens(source).inspect_err(|e| eprintln!("{e}")) else {
+        return ExitCode::from(65);
+    };
 
-    interpret(&stmts).inspect_err(|e| eprintln!("{e}"))
+    let Some(stmts) = parser::parse(&tokens) else {
+        return ExitCode::from(65);
+    };
+
+    interpret(&stmts)
+        .inspect_err(|e| eprintln!("{e}"))
+        .map_or_else(
+            |e| {
+                eprintln!("{e}");
+                ExitCode::from(70)
+            },
+            |_| ExitCode::SUCCESS,
+        )
 }
 
 fn main() -> ExitCode {
