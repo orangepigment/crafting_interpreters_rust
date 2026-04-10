@@ -3,8 +3,8 @@ use std::mem::{Discriminant, discriminant};
 use crate::{
     ast::{Expr, ExprInfo, Stmt},
     errors::{InterpreterError, Result},
+    runtime::VariableValue,
     scanner::models::{Token, TokenInfo},
-    state::VariableValue,
 };
 
 pub fn parse(tokens: &[TokenInfo]) -> Option<Vec<Stmt>> {
@@ -42,12 +42,16 @@ pub fn parse(tokens: &[TokenInfo]) -> Option<Vec<Stmt>> {
 
 fn declaration(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Var)]);
-
     if has_advanced {
-        var_declaration(pos, tokens)
-    } else {
-        statement(pos, tokens)
+        return var_declaration(pos, tokens);
     }
+
+    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Fun)]);
+    if has_advanced {
+        return function(pos, tokens, "function");
+    }
+
+    statement(pos, tokens)
 }
 
 fn var_declaration(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
@@ -90,6 +94,90 @@ fn var_declaration(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     Ok((pos, var_stmt))
 }
 
+fn function(pos: usize, tokens: &[TokenInfo], kind: &str) -> Result<(usize, Stmt)> {
+    let (pos, name) = consume(
+        pos,
+        tokens,
+        discriminant(&Token::Identifier {
+            lexeme: String::new(),
+        }),
+        format!("Expect {kind} name"),
+    )?;
+    let mut pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::LeftParen),
+        format!("Expect '(' after {kind} name"),
+    )?
+    .0;
+
+    let mut params = vec![];
+
+    if !check(pos, tokens, discriminant(&Token::RightParen)) {
+        loop {
+            if params.len() >= 255 {
+                let warning = InterpreterError::parser_error(
+                    pos,
+                    peek(pos, tokens),
+                    String::from("Can't have more than 255 parameters."),
+                );
+                eprint!("{warning}");
+            }
+
+            let consume_result = consume(
+                pos,
+                tokens,
+                discriminant(&Token::Identifier {
+                    lexeme: String::new(),
+                }),
+                "Expect parameter name".to_string(),
+            )?;
+            pos = consume_result.0;
+            params.push(consume_result.1);
+
+            let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::Comma)]);
+
+            pos = advance_result.0;
+            let has_advanced = advance_result.1;
+            if !has_advanced {
+                break;
+            }
+        }
+    }
+
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::RightParen),
+        "Expect ')' after parameters.".to_string(),
+    )?
+    .0;
+
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::LeftBrace),
+        format!("Expect '{{' before {kind} body."),
+    )?
+    .0;
+
+    let (pos, body) = block(pos, tokens)?;
+
+    let params = params
+        .iter()
+        .map(|p| p.token.lexeme().to_string())
+        .collect();
+
+    Ok((
+        pos,
+        Stmt::Function {
+            name: name.token.lexeme().to_string(),
+            params,
+            body,
+        },
+    ))
+}
+
 fn statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Print)]);
     if has_advanced {
@@ -98,7 +186,7 @@ fn statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
 
     let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::LeftBrace)]);
     if has_advanced {
-        return block_statement(pos, tokens);
+        return block(pos, tokens).map(|b| (b.0, Stmt::Block { statements: b.1 }));
     };
 
     let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::If)]);
@@ -114,6 +202,11 @@ fn statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::For)]);
     if has_advanced {
         return for_statement(pos, tokens);
+    };
+
+    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Return)]);
+    if has_advanced {
+        return return_statement(pos, tokens);
     };
 
     expr_statement(pos, tokens)
@@ -133,7 +226,7 @@ fn print_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     Ok((pos, Stmt::Print { expr }))
 }
 
-fn block_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
+fn block(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Vec<Stmt>)> {
     let mut statements = Vec::new();
     let mut pos = pos;
 
@@ -152,7 +245,7 @@ fn block_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     )?
     .0;
 
-    Ok((pos, Stmt::Block { statements }))
+    Ok((pos, statements))
 }
 
 fn if_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
@@ -312,6 +405,29 @@ fn for_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
     }
 
     Ok((pos, body))
+}
+
+fn return_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
+    let line = previous(pos, tokens).line;
+
+    let mut pos = pos;
+    let value = if !check(pos, tokens, discriminant(&Token::Semicolon)) {
+        let expr_result = expression(pos, tokens)?;
+        pos = expr_result.0;
+        Some(expr_result.1)
+    } else {
+        None
+    };
+
+    let pos = consume(
+        pos,
+        tokens,
+        discriminant(&Token::Semicolon),
+        String::from("Expect ';' after return value."),
+    )?
+    .0;
+
+    Ok((pos, Stmt::Return { line, value }))
 }
 
 fn expr_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
@@ -517,8 +633,64 @@ fn unary(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
 
         ExprInfo::unary(pos, operator, arg).map(|expr| (pos, expr))
     } else {
-        primary(pos, tokens)
+        call(pos, tokens)
     }
+}
+
+fn call(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
+    let (mut pos, mut expr) = primary(pos, tokens)?;
+
+    loop {
+        let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::LeftParen)]);
+
+        pos = advance_result.0;
+        let has_advanced = advance_result.1;
+
+        if has_advanced {
+            (pos, expr) = finish_call(pos, tokens, expr)?;
+        } else {
+            break Ok((pos, expr));
+        }
+    }
+}
+
+fn finish_call(pos: usize, tokens: &[TokenInfo], callee: ExprInfo) -> Result<(usize, ExprInfo)> {
+    let mut args = vec![];
+
+    let mut pos = pos;
+    if !check(pos, tokens, discriminant(&Token::RightParen)) {
+        loop {
+            if args.len() >= 255 {
+                let warning = InterpreterError::parser_error(
+                    pos,
+                    peek(pos, tokens),
+                    String::from("Can't have more than 255 arguments."),
+                );
+                eprint!("{warning}");
+            }
+
+            let advance_result = expression(pos, tokens)?;
+            pos = advance_result.0;
+            args.push(advance_result.1);
+
+            let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::Comma)]);
+
+            pos = advance_result.0;
+            let has_advanced = advance_result.1;
+            if !has_advanced {
+                break;
+            }
+        }
+    }
+
+    let (pos, paren) = consume(
+        pos,
+        tokens,
+        discriminant(&Token::RightParen),
+        String::from("Expect ')' after arguments."),
+    )?;
+
+    Ok((pos, ExprInfo::call(paren.line, callee, args)))
 }
 
 // TODO: refactor use one big match instead of multiple if-blocks

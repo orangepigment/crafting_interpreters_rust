@@ -1,10 +1,11 @@
 use crate::errors::{InterpreterError, Result};
 use crate::{
+    runtime::VariableValue,
     scanner::models::{Token, TokenInfo},
-    state::VariableValue,
 };
 
 // TODO: factory methods can be pub(super) to restrict usage only for parent parser module
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExprInfo {
     pub expr: Box<Expr>,
     pub line: u32,
@@ -69,40 +70,100 @@ impl ExprInfo {
     pub fn assignment(name: String, line: u32, value: ExprInfo) -> ExprInfo {
         ExprInfo::new(Expr::Assignment { name, value }, line)
     }
+
+    pub fn call(line: u32, callee: ExprInfo, args: Vec<ExprInfo>) -> ExprInfo {
+        ExprInfo::new(Expr::Call { callee, args }, line)
+    }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Grouping { expr: ExprInfo },
+    Grouping {
+        expr: ExprInfo,
+    },
 
-    Literal { value: VariableValue },
+    Literal {
+        value: VariableValue,
+    },
     Nil,
-    Variable { name: String },
-    Assignment { name: String, value: ExprInfo },
+    Variable {
+        name: String,
+    },
+    Assignment {
+        name: String,
+        value: ExprInfo,
+    },
 
     // Unary
     // -a
-    Negative { expr: ExprInfo },
+    Negative {
+        expr: ExprInfo,
+    },
 
     // !a
-    Not { expr: ExprInfo },
+    Not {
+        expr: ExprInfo,
+    },
 
     //Binary
-    Equals { left: ExprInfo, right: ExprInfo },
-    NotEquals { left: ExprInfo, right: ExprInfo },
-    Less { left: ExprInfo, right: ExprInfo },
-    LessEquals { left: ExprInfo, right: ExprInfo },
-    Greater { left: ExprInfo, right: ExprInfo },
-    GreaterEquals { left: ExprInfo, right: ExprInfo },
+    Equals {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    NotEquals {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    Less {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    LessEquals {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    Greater {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    GreaterEquals {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
 
-    Plus { left: ExprInfo, right: ExprInfo },
-    Minus { left: ExprInfo, right: ExprInfo },
-    Multiply { left: ExprInfo, right: ExprInfo },
-    Divide { left: ExprInfo, right: ExprInfo },
+    Plus {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    Minus {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    Multiply {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    Divide {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
 
-    Or { left: ExprInfo, right: ExprInfo },
-    And { left: ExprInfo, right: ExprInfo },
+    Or {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+    And {
+        left: ExprInfo,
+        right: ExprInfo,
+    },
+
+    Call {
+        callee: ExprInfo,
+        args: Vec<ExprInfo>,
+    },
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Expr {
         expr: ExprInfo,
@@ -125,5 +186,16 @@ pub enum Stmt {
     While {
         condition: ExprInfo,
         stmt: Box<Stmt>,
+    },
+
+    Function {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
+
+    Return {
+        line: u32,
+        value: Option<ExprInfo>,
     },
 }

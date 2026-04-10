@@ -150,7 +150,7 @@ fn scan_token(
         'a'..='z' | 'A'..='Z' | '_' => identifier_token(&pos, source).map(|ps| (ps.0, Some(ps.1))),
         unexpected => Err(InterpreterError::scanner_error(
             pos.line,
-            format!("Unexpected character '{unexpected}'"),
+            "Unexpected character.".to_string(),
         )),
     }
 }

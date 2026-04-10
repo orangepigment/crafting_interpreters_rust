@@ -1,15 +1,17 @@
 use crate::errors::{InterpreterError, Result};
 
+use crate::runtime::{CLOCK, LoxCallable};
 use crate::{
     ast::{Expr, ExprInfo, Stmt},
-    state::{Environment, VariableValue},
+    runtime::{Environment, VariableValue},
 };
 
 pub fn interpret(stmts: &Vec<Stmt>) -> Result<()> {
-    let mut env = Environment::new();
+    let mut global_env = Environment::new();
+    global_env.define(String::from("clock"), CLOCK);
 
     for s in stmts {
-        env = execute_stmt(s, env)?;
+        global_env = execute_stmt(s, global_env)?;
     }
 
     Ok(())
@@ -62,23 +64,37 @@ fn execute_stmt(stmt: &Stmt, mut env: Environment) -> Result<Environment> {
 
             Ok(env)
         }
+        Stmt::Function { name, params, body } => {
+            let function = LoxCallable::Function {
+                name: name.to_string(),
+                params: params.to_vec(),
+                body: body.to_vec(),
+            };
+            env.define(name.to_string(), VariableValue::Function { raw: function });
+
+            Ok(env)
+        }
+        Stmt::Return { line, value } => {
+            // TODO: add Interpreter::ReturnErroe for unwinding. We don't need to return env from functions
+
+            let value = match value {
+                Some(v) => evaluate_expr(v, &mut env)?,
+                None => VariableValue::Nil,
+            };
+
+            Err(InterpreterError::return_value(value))
+        }
     }
 }
 
-fn execute_block(statements: &[Stmt], env: Environment) -> Result<Environment> {
+pub fn execute_block(statements: &[Stmt], env: Environment) -> Result<Environment> {
     let mut env = env;
 
     for stmt in statements {
         env = execute_stmt(stmt, env)?;
     }
 
-    env.unscope()
-        .map(|b| *b)
-        // In practice this error should never happen
-        .ok_or(InterpreterError::runtime_error(
-            1,
-            String::from("No parent environment in local scope"),
-        ))
+    Ok(env.unscope())
 }
 
 fn evaluate_expr(expr: &ExprInfo, env: &mut Environment) -> Result<VariableValue> {
@@ -215,6 +231,29 @@ fn evaluate_expr(expr: &ExprInfo, env: &mut Environment) -> Result<VariableValue
             } else {
                 evaluate_expr(right, env)
             }
+        }
+        Expr::Call { callee, args } => {
+            let evaled_callee = evaluate_expr(callee, env)?;
+
+            let mut evaled_args = vec![];
+            for a in args {
+                evaled_args.push(evaluate_expr(a, env)?);
+            }
+
+            let function = evaled_callee.into_function(callee.line)?;
+
+            if evaled_args.len() != function.arity() {
+                return Err(InterpreterError::runtime_error(
+                    callee.line,
+                    format!(
+                        "Expected {0} arguments but got {1}.",
+                        function.arity(),
+                        evaled_args.len()
+                    ),
+                ));
+            }
+
+            function.call(callee.line, &evaled_args)
         }
     }
 }
