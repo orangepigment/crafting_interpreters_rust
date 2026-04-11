@@ -1,9 +1,9 @@
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 use crate::{
     ast::Stmt,
     errors::{InterpreterError, Result},
-    interpreter::execute_block,
+    interpreter::Interpreter,
 };
 
 pub const CLOCK: VariableValue = VariableValue::Function {
@@ -44,30 +44,40 @@ pub enum LoxCallable {
         name: String,
         params: Vec<String>,
         body: Vec<Stmt>,
+        closure: usize, // Index of the captured env
     },
     NativeClock,
 }
 
 impl LoxCallable {
-    pub fn call(&self, line: u32, args: &[VariableValue]) -> Result<VariableValue> {
+    pub fn call(
+        &mut self,
+        interpreter: &mut Interpreter,
+        line: u32,
+        args: &[VariableValue],
+    ) -> Result<VariableValue> {
         match self {
             LoxCallable::Function {
                 name: _,
                 params,
                 body,
+                closure,
             } => {
-                // Set global env with clock and other global objects
-                let mut env = Environment::new();
-                env.define(String::from("clock"), CLOCK);
+                // TODO: add local scope pointing to closure scope. Interpreter needs a special API for that?
+                interpreter.scope();
                 for (p, a) in std::iter::zip(params, args) {
-                    env.define(p.to_string(), a.clone());
+                    interpreter.define(*closure, p.to_string(), a.clone());
                 }
 
-                match execute_block(body, env) {
+                let result = match interpreter.execute_block(body) {
                     Ok(_) => Ok(VariableValue::Nil),
                     Err(InterpreterError::Return { value }) => Ok(value),
                     Err(err) => Err(err),
-                }
+                };
+
+                interpreter.unscope();
+
+                result
             }
             LoxCallable::NativeClock => {
                 let now = std::time::SystemTime::now();
@@ -83,11 +93,7 @@ impl LoxCallable {
 
     pub fn arity(&self) -> usize {
         match self {
-            LoxCallable::Function {
-                name: _,
-                params,
-                body: _,
-            } => params.len(),
+            LoxCallable::Function { params, .. } => params.len(),
             LoxCallable::NativeClock => 0,
         }
     }
@@ -101,77 +107,11 @@ impl fmt::Display for VariableValue {
             VariableValue::Boolean { value } => write!(f, "{value}"),
             VariableValue::Nil => write!(f, "nil"),
             VariableValue::Function {
-                raw:
-                    LoxCallable::Function {
-                        name,
-                        params: _,
-                        body: _,
-                    },
+                raw: LoxCallable::Function { name, .. },
             } => write!(f, "<fn {name}>"),
             VariableValue::Function {
                 raw: LoxCallable::NativeClock,
             } => write!(f, "<native fn>"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Environment {
-    values: HashMap<String, VariableValue>,
-    enclosing: Option<Box<Environment>>,
-}
-
-impl Environment {
-    pub fn new() -> Environment {
-        Environment {
-            values: HashMap::new(),
-            enclosing: None,
-        }
-    }
-
-    pub fn scope(self) -> Environment {
-        Environment {
-            values: HashMap::new(),
-            enclosing: Some(Box::new(self)),
-        }
-    }
-
-    pub fn unscope(self) -> Environment {
-        match self.enclosing {
-            Some(outer_scope) => *outer_scope,
-            None => self,
-        }
-    }
-
-    pub fn get(&self, name: &str, line: u32) -> Result<&VariableValue> {
-        match self.values.get(name) {
-            Some(value) => Ok(value),
-            None => match &self.enclosing {
-                Some(env) => env.get(name, line),
-                None => Err(InterpreterError::runtime_error(
-                    line,
-                    format!("Undefined variable '{name}'."),
-                )),
-            },
-        }
-    }
-
-    pub fn define(&mut self, name: String, value: VariableValue) {
-        self.values.insert(name, value);
-    }
-
-    pub fn assign(&mut self, name: String, value: VariableValue, line: u32) -> Result<()> {
-        if self.values.contains_key(&name) {
-            self.values.insert(name, value);
-            Ok(())
-        } else {
-            match &mut self.enclosing {
-                Some(env) => env.assign(name, value, line),
-                None => Err(InterpreterError::runtime_error(
-                    line,
-                    format!("Undefined variable '{name}'."),
-                )),
-            }
         }
     }
 }

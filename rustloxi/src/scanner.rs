@@ -5,7 +5,7 @@ use crate::{
     scanner::models::{ScannerPosition, Token, TokenInfo},
 };
 
-// TODO: write tests at least for small helper methods?
+// TODO: convert into a struct with pos field?
 pub fn scan_tokens(source: &str) -> Result<Vec<TokenInfo>> {
     let mut tokens: Vec<TokenInfo> = Vec::new();
     let source: Vec<char> = source.chars().collect();
@@ -148,10 +148,13 @@ fn scan_token(
         '"' => string_token(&pos, source).map(|ps| (ps.0, Some(ps.1))),
         '0'..='9' => number_token(&pos, source).map(|ps| (ps.0, Some(ps.1))),
         'a'..='z' | 'A'..='Z' | '_' => identifier_token(&pos, source).map(|ps| (ps.0, Some(ps.1))),
-        unexpected => Err(InterpreterError::scanner_error(
-            pos.line,
-            "Unexpected character.".to_string(),
-        )),
+        _ => {
+            let error =
+                InterpreterError::scanner_error(pos.line, "Unexpected character.".to_string());
+            eprintln!("{error}");
+
+            Ok((pos, None))
+        }
     }
 }
 

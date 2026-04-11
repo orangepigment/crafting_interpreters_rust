@@ -7,854 +7,773 @@ use crate::{
     scanner::models::{Token, TokenInfo},
 };
 
-pub fn parse(tokens: &[TokenInfo]) -> Option<Vec<Stmt>> {
-    let mut had_errors = false;
+pub struct Parser {
+    pos: usize,
+    had_errors: bool,
+}
 
-    let mut statements = Vec::new();
-    let mut pos = 0;
-    while !is_at_end(pos, tokens) {
-        let result = declaration(pos, tokens);
+impl Parser {
+    pub fn new() -> Parser {
+        Parser {
+            pos: 0,
+            had_errors: false,
+        }
+    }
 
-        match result {
-            Ok(res) => {
-                pos = res.0;
-                statements.push(res.1);
+    pub fn parse(&mut self, tokens: &[TokenInfo]) -> Option<Vec<Stmt>> {
+        self.pos = 0;
+        self.had_errors = false;
+
+        let mut statements = Vec::new();
+        while !self.is_at_end(tokens) {
+            let result = self.declaration(tokens);
+
+            match result {
+                Ok(res) => {
+                    statements.push(res);
+                }
+                Err(e @ InterpreterError::Parser { .. }) => {
+                    self.had_errors = true;
+                    eprintln!("{e}");
+
+                    self.synchronize(tokens);
+                }
+                _ => unreachable!(),
+            };
+        }
+
+        if self.had_errors {
+            None
+        } else {
+            Some(statements)
+        }
+    }
+
+    fn declaration(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Var)]);
+        if has_advanced {
+            return self.var_declaration(tokens);
+        }
+
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Fun)]);
+        if has_advanced {
+            return self.function(tokens, "function");
+        }
+
+        self.statement(tokens)
+    }
+
+    fn var_declaration(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        let name = self.consume(
+            tokens,
+            // discriminant ignores values
+            discriminant(&Token::Identifier {
+                lexeme: String::new(),
+            }),
+            String::from("Expect variable name."),
+        )?;
+        let name = name.token.lexeme().to_string();
+
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Equal)]);
+
+        let var_stmt = if has_advanced {
+            let expr_result = self.expression(tokens)?;
+
+            Stmt::Var {
+                name,
+                initializer: Some(expr_result),
             }
-            Err(
-                e @ InterpreterError::Parser {
-                    line: _,
-                    pos: err_pos,
-                    location: _,
-                    message: _,
-                },
-            ) => {
-                had_errors = true;
-                eprintln!("{e}");
-
-                pos = synchronize(err_pos, tokens);
+        } else {
+            Stmt::Var {
+                name,
+                initializer: None,
             }
-            _ => unreachable!(),
         };
+
+        self.consume(
+            tokens,
+            discriminant(&Token::Semicolon),
+            String::from("Expect ';' after variable declaration."),
+        )?;
+
+        Ok(var_stmt)
     }
 
-    if had_errors { None } else { Some(statements) }
-}
+    fn function(&mut self, tokens: &[TokenInfo], kind: &str) -> Result<Stmt> {
+        let name = self.consume(
+            tokens,
+            discriminant(&Token::Identifier {
+                lexeme: String::new(),
+            }),
+            format!("Expect {kind} name"),
+        )?;
 
-fn declaration(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Var)]);
-    if has_advanced {
-        return var_declaration(pos, tokens);
-    }
+        self.consume(
+            tokens,
+            discriminant(&Token::LeftParen),
+            format!("Expect '(' after {kind} name"),
+        )?;
 
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Fun)]);
-    if has_advanced {
-        return function(pos, tokens, "function");
-    }
+        let mut params = vec![];
 
-    statement(pos, tokens)
-}
+        if !self.check(tokens, discriminant(&Token::RightParen)) {
+            loop {
+                if params.len() >= 255 {
+                    let warning = InterpreterError::parser_error(
+                        self.pos,
+                        self.peek(tokens),
+                        String::from("Can't have more than 255 parameters."),
+                    );
+                    eprint!("{warning}");
+                    self.had_errors = true;
+                }
 
-fn var_declaration(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let (pos, name) = consume(
-        pos,
-        tokens,
-        // discriminant ignores values
-        discriminant(&Token::Identifier {
-            lexeme: String::new(),
-        }),
-        String::from("Expect variable name."),
-    )?;
-    let name = name.token.lexeme().to_string();
+                let param = self.consume(
+                    tokens,
+                    discriminant(&Token::Identifier {
+                        lexeme: String::new(),
+                    }),
+                    "Expect parameter name".to_string(),
+                )?;
+                params.push(param);
 
-    let (mut pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Equal)]);
+                let advance_result =
+                    self.advance_on_match(tokens, vec![discriminant(&Token::Comma)]);
 
-    let var_stmt = if has_advanced {
-        let expr_result = expression(pos, tokens)?;
-        pos = expr_result.0;
-
-        Stmt::Var {
-            name,
-            initializer: Some(expr_result.1),
-        }
-    } else {
-        Stmt::Var {
-            name,
-            initializer: None,
-        }
-    };
-
-    pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::Semicolon),
-        String::from("Expect ';' after variable declaration."),
-    )?
-    .0;
-
-    Ok((pos, var_stmt))
-}
-
-fn function(pos: usize, tokens: &[TokenInfo], kind: &str) -> Result<(usize, Stmt)> {
-    let (pos, name) = consume(
-        pos,
-        tokens,
-        discriminant(&Token::Identifier {
-            lexeme: String::new(),
-        }),
-        format!("Expect {kind} name"),
-    )?;
-    let mut pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::LeftParen),
-        format!("Expect '(' after {kind} name"),
-    )?
-    .0;
-
-    let mut params = vec![];
-
-    if !check(pos, tokens, discriminant(&Token::RightParen)) {
-        loop {
-            if params.len() >= 255 {
-                let warning = InterpreterError::parser_error(
-                    pos,
-                    peek(pos, tokens),
-                    String::from("Can't have more than 255 parameters."),
-                );
-                eprint!("{warning}");
-            }
-
-            let consume_result = consume(
-                pos,
-                tokens,
-                discriminant(&Token::Identifier {
-                    lexeme: String::new(),
-                }),
-                "Expect parameter name".to_string(),
-            )?;
-            pos = consume_result.0;
-            params.push(consume_result.1);
-
-            let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::Comma)]);
-
-            pos = advance_result.0;
-            let has_advanced = advance_result.1;
-            if !has_advanced {
-                break;
+                let has_advanced = advance_result;
+                if !has_advanced {
+                    break;
+                }
             }
         }
-    }
 
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::RightParen),
-        "Expect ')' after parameters.".to_string(),
-    )?
-    .0;
+        self.consume(
+            tokens,
+            discriminant(&Token::RightParen),
+            "Expect ')' after parameters.".to_string(),
+        )?;
 
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::LeftBrace),
-        format!("Expect '{{' before {kind} body."),
-    )?
-    .0;
+        self.consume(
+            tokens,
+            discriminant(&Token::LeftBrace),
+            format!("Expect '{{' before {kind} body."),
+        )?;
 
-    let (pos, body) = block(pos, tokens)?;
+        let body = self.block(tokens)?;
 
-    let params = params
-        .iter()
-        .map(|p| p.token.lexeme().to_string())
-        .collect();
+        let params = params
+            .iter()
+            .map(|p| p.token.lexeme().to_string())
+            .collect();
 
-    Ok((
-        pos,
-        Stmt::Function {
+        Ok(Stmt::Function {
             name: name.token.lexeme().to_string(),
             params,
             body,
-        },
-    ))
-}
-
-fn statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Print)]);
-    if has_advanced {
-        return print_statement(pos, tokens);
-    };
-
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::LeftBrace)]);
-    if has_advanced {
-        return block(pos, tokens).map(|b| (b.0, Stmt::Block { statements: b.1 }));
-    };
-
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::If)]);
-    if has_advanced {
-        return if_statement(pos, tokens);
-    };
-
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::While)]);
-    if has_advanced {
-        return while_statement(pos, tokens);
-    };
-
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::For)]);
-    if has_advanced {
-        return for_statement(pos, tokens);
-    };
-
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Return)]);
-    if has_advanced {
-        return return_statement(pos, tokens);
-    };
-
-    expr_statement(pos, tokens)
-}
-
-fn print_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let (pos, expr) = expression(pos, tokens)?;
-
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::Semicolon),
-        String::from("Expect ';' after value."),
-    )?
-    .0;
-
-    Ok((pos, Stmt::Print { expr }))
-}
-
-fn block(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Vec<Stmt>)> {
-    let mut statements = Vec::new();
-    let mut pos = pos;
-
-    while !check(pos, tokens, discriminant(&Token::RightBrace)) && !is_at_end(pos, tokens) {
-        let stmt_result = declaration(pos, tokens)?;
-        pos = stmt_result.0;
-
-        statements.push(stmt_result.1);
+        })
     }
 
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::RightBrace),
-        String::from("Expect '}' after block."),
-    )?
-    .0;
+    fn statement(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Print)]);
+        if has_advanced {
+            return self.print_statement(tokens);
+        };
 
-    Ok((pos, statements))
-}
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::LeftBrace)]);
+        if has_advanced {
+            return self.block(tokens).map(|b| Stmt::Block { statements: b });
+        };
 
-fn if_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::LeftParen),
-        String::from("Expect '(' after 'if'."),
-    )?
-    .0;
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::If)]);
+        if has_advanced {
+            return self.if_statement(tokens);
+        };
 
-    let (pos, cond) = expression(pos, tokens)?;
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::While)]);
+        if has_advanced {
+            return self.while_statement(tokens);
+        };
 
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::RightParen),
-        String::from("Expect ')' after if condition."),
-    )?
-    .0;
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::For)]);
+        if has_advanced {
+            return self.for_statement(tokens);
+        };
 
-    let (pos, then_branch) = statement(pos, tokens)?;
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Return)]);
+        if has_advanced {
+            return self.return_statement(tokens);
+        };
 
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Else)]);
+        self.expr_statement(tokens)
+    }
 
-    let (pos, else_branch) = if has_advanced {
-        statement(pos, tokens).map(|r| (r.0, Some(r.1)))?
-    } else {
-        (pos, None)
-    };
+    fn print_statement(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        let expr = self.expression(tokens)?;
 
-    Ok((
-        pos,
-        Stmt::If {
+        self.consume(
+            tokens,
+            discriminant(&Token::Semicolon),
+            String::from("Expect ';' after value."),
+        )?;
+
+        Ok(Stmt::Print { expr })
+    }
+
+    fn block(&mut self, tokens: &[TokenInfo]) -> Result<Vec<Stmt>> {
+        let mut statements = Vec::new();
+
+        while !self.check(tokens, discriminant(&Token::RightBrace)) && !self.is_at_end(tokens) {
+            let stmt_result = self.declaration(tokens)?;
+
+            statements.push(stmt_result);
+        }
+
+        self.consume(
+            tokens,
+            discriminant(&Token::RightBrace),
+            String::from("Expect '}' after block."),
+        )?;
+
+        Ok(statements)
+    }
+
+    fn if_statement(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        self.consume(
+            tokens,
+            discriminant(&Token::LeftParen),
+            String::from("Expect '(' after 'if'."),
+        )?;
+
+        let cond = self.expression(tokens)?;
+
+        self.consume(
+            tokens,
+            discriminant(&Token::RightParen),
+            String::from("Expect ')' after if condition."),
+        )?;
+
+        let then_branch = self.statement(tokens)?;
+
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Else)]);
+
+        let else_branch = if has_advanced {
+            self.statement(tokens).map(Some)?
+        } else {
+            None
+        };
+
+        Ok(Stmt::If {
             condition: cond,
             then_branch: Box::new(then_branch),
             else_branch: else_branch.map(Box::new),
-        },
-    ))
-}
+        })
+    }
 
-fn while_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::LeftParen),
-        String::from("Expect '(' after 'while'."),
-    )?
-    .0;
+    fn while_statement(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        self.consume(
+            tokens,
+            discriminant(&Token::LeftParen),
+            String::from("Expect '(' after 'while'."),
+        )?;
 
-    let (pos, expr) = expression(pos, tokens)?;
+        let expr = self.expression(tokens)?;
 
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::RightParen),
-        String::from("Expect ')' after while condition."),
-    )?
-    .0;
+        self.consume(
+            tokens,
+            discriminant(&Token::RightParen),
+            String::from("Expect ')' after while condition."),
+        )?;
 
-    let (pos, stmt) = statement(pos, tokens)?;
+        let stmt = self.statement(tokens)?;
 
-    Ok((
-        pos,
-        Stmt::While {
+        Ok(Stmt::While {
             condition: expr,
             stmt: Box::new(stmt),
-        },
-    ))
-}
-
-fn for_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::LeftParen),
-        String::from("Expect '(' after 'for'."),
-    )?
-    .0;
-
-    let initializer: Option<Stmt>;
-
-    let (mut pos, has_advanced) =
-        advance_on_match(pos, tokens, vec![discriminant(&Token::Semicolon)]);
-    if has_advanced {
-        initializer = None;
-    } else {
-        let (inner_pos, has_advanced) =
-            advance_on_match(pos, tokens, vec![discriminant(&Token::Var)]);
-        if has_advanced {
-            let result = var_declaration(inner_pos, tokens)?;
-
-            pos = result.0;
-            initializer = Some(result.1);
-        } else {
-            let result = expr_statement(inner_pos, tokens)?;
-
-            pos = result.0;
-            initializer = Some(result.1);
-        }
+        })
     }
 
-    let (pos, condition) = if !check(pos, tokens, discriminant(&Token::Semicolon)) {
-        expression(pos, tokens).map(|e| (e.0, Some(e.1)))?
-    } else {
-        (pos, None)
-    };
-    let condition_line = peek(pos, tokens).line;
-
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::Semicolon),
-        String::from("Expect ';' after loop condition."),
-    )?
-    .0;
-
-    let (pos, increment) = if !check(pos, tokens, discriminant(&Token::RightParen)) {
-        expression(pos, tokens).map(|e| (e.0, Some(e.1)))?
-    } else {
-        (pos, None)
-    };
-
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::RightParen),
-        String::from("Expect ')' after for clauses."),
-    )?
-    .0;
-
-    let (pos, mut body) = statement(pos, tokens)?;
-
-    // Desugaring For Loop to While Loop
-    if let Some(incr) = increment {
-        body = Stmt::Block {
-            statements: vec![body, Stmt::Expr { expr: incr }],
-        }
-    }
-
-    let condition = condition.unwrap_or(ExprInfo::new(
-        Expr::Literal {
-            value: VariableValue::Boolean { value: true },
-        },
-        condition_line,
-    ));
-
-    body = Stmt::While {
-        condition,
-        stmt: Box::new(body),
-    };
-
-    if let Some(init) = initializer {
-        body = Stmt::Block {
-            statements: vec![init, body],
-        }
-    }
-
-    Ok((pos, body))
-}
-
-fn return_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let line = previous(pos, tokens).line;
-
-    let mut pos = pos;
-    let value = if !check(pos, tokens, discriminant(&Token::Semicolon)) {
-        let expr_result = expression(pos, tokens)?;
-        pos = expr_result.0;
-        Some(expr_result.1)
-    } else {
-        None
-    };
-
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::Semicolon),
-        String::from("Expect ';' after return value."),
-    )?
-    .0;
-
-    Ok((pos, Stmt::Return { line, value }))
-}
-
-fn expr_statement(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, Stmt)> {
-    let (pos, expr) = expression(pos, tokens)?;
-
-    let pos = consume(
-        pos,
-        tokens,
-        discriminant(&Token::Semicolon),
-        String::from("Expect ';' after expression."),
-    )?
-    .0;
-
-    Ok((pos, Stmt::Expr { expr }))
-}
-
-fn expression(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    assignment(pos, tokens)
-}
-
-fn assignment(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (pos, expr) = logic_or(pos, tokens)?;
-
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Equal)]);
-
-    if has_advanced {
-        let equals_token = previous(pos, tokens);
-        let (pos, value) = assignment(pos, tokens)?;
-
-        match *expr.expr {
-            Expr::Variable { name } => Ok((pos, ExprInfo::assignment(name, expr.line, value))),
-            _ => Err(InterpreterError::parser_error(
-                pos,
-                equals_token,
-                String::from("Invalid assignment target."),
-            )),
-        }
-    } else {
-        Ok((pos, expr))
-    }
-}
-
-fn logic_or(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (mut pos, mut expr) = logic_and(pos, tokens)?;
-
-    loop {
-        let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::Or)]);
-
-        pos = advance_result.0;
-        let has_advanced = advance_result.1;
-
-        if has_advanced {
-            let operator = previous(pos, tokens);
-            let comparison_result = logic_and(pos, tokens)?;
-            pos = comparison_result.0;
-            let right = comparison_result.1;
-            expr = ExprInfo::binary(pos, expr, operator, right)?;
-        } else {
-            break Ok((pos, expr));
-        }
-    }
-}
-
-fn logic_and(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (mut pos, mut expr) = equality(pos, tokens)?;
-
-    loop {
-        let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::And)]);
-
-        pos = advance_result.0;
-        let has_advanced = advance_result.1;
-
-        if has_advanced {
-            let operator = previous(pos, tokens);
-            let comparison_result = equality(pos, tokens)?;
-            pos = comparison_result.0;
-            let right = comparison_result.1;
-            expr = ExprInfo::binary(pos, expr, operator, right)?;
-        } else {
-            break Ok((pos, expr));
-        }
-    }
-}
-
-fn equality(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (mut pos, mut expr) = comparison(pos, tokens)?;
-
-    loop {
-        let advance_result = advance_on_match(
-            pos,
+    fn for_statement(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        self.consume(
             tokens,
-            vec![
-                discriminant(&Token::BangEqual),
-                discriminant(&Token::EqualEqual),
-            ],
-        );
+            discriminant(&Token::LeftParen),
+            String::from("Expect '(' after 'for'."),
+        )?;
 
-        pos = advance_result.0;
-        let has_advanced = advance_result.1;
+        let initializer: Option<Stmt>;
 
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Semicolon)]);
         if has_advanced {
-            let operator = previous(pos, tokens);
-            let comparison_result = comparison(pos, tokens)?;
-            pos = comparison_result.0;
-            let right = comparison_result.1;
-            expr = ExprInfo::binary(pos, expr, operator, right)?;
+            initializer = None;
         } else {
-            break Ok((pos, expr));
+            let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Var)]);
+            if has_advanced {
+                let stmt = self.var_declaration(tokens)?;
+
+                initializer = Some(stmt);
+            } else {
+                let stmt = self.expr_statement(tokens)?;
+
+                initializer = Some(stmt);
+            }
         }
-    }
-}
 
-fn comparison(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (mut pos, mut expr) = term(pos, tokens)?;
+        let condition = if !self.check(tokens, discriminant(&Token::Semicolon)) {
+            self.expression(tokens).map(Some)?
+        } else {
+            None
+        };
+        let condition_line = self.peek(tokens).line;
 
-    loop {
-        let advance_result = advance_on_match(
-            pos,
+        self.consume(
             tokens,
-            vec![
-                discriminant(&Token::Greater),
-                discriminant(&Token::GreaterEqual),
-                discriminant(&Token::Less),
-                discriminant(&Token::LessEqual),
-            ],
-        );
+            discriminant(&Token::Semicolon),
+            String::from("Expect ';' after loop condition."),
+        )?;
 
-        pos = advance_result.0;
-        let has_advanced = advance_result.1;
-
-        if has_advanced {
-            let operator = previous(pos, tokens);
-            let comparison_result = comparison(pos, tokens)?;
-            pos = comparison_result.0;
-            let right = comparison_result.1;
-            expr = ExprInfo::binary(pos, expr, operator, right)?;
+        let increment = if !self.check(tokens, discriminant(&Token::RightParen)) {
+            self.expression(tokens).map(Some)?
         } else {
-            break Ok((pos, expr));
-        }
-    }
-}
+            None
+        };
 
-fn term(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (mut pos, mut expr) = factor(pos, tokens)?;
-
-    loop {
-        let advance_result = advance_on_match(
-            pos,
+        self.consume(
             tokens,
-            vec![discriminant(&Token::Minus), discriminant(&Token::Plus)],
-        );
+            discriminant(&Token::RightParen),
+            String::from("Expect ')' after for clauses."),
+        )?;
 
-        pos = advance_result.0;
-        let has_advanced = advance_result.1;
+        let mut body = self.statement(tokens)?;
 
-        if has_advanced {
-            let operator = previous(pos, tokens);
-            let comparison_result = comparison(pos, tokens)?;
-            pos = comparison_result.0;
-            let right = comparison_result.1;
-            expr = ExprInfo::binary(pos, expr, operator, right)?;
-        } else {
-            break Ok((pos, expr));
+        // Desugaring For Loop to While Loop
+        if let Some(incr) = increment {
+            body = Stmt::Block {
+                statements: vec![body, Stmt::Expr { expr: incr }],
+            }
         }
+
+        let condition = condition.unwrap_or(ExprInfo::new(
+            Expr::Literal {
+                value: VariableValue::Boolean { value: true },
+            },
+            condition_line,
+        ));
+
+        body = Stmt::While {
+            condition,
+            stmt: Box::new(body),
+        };
+
+        if let Some(init) = initializer {
+            body = Stmt::Block {
+                statements: vec![init, body],
+            }
+        }
+
+        Ok(body)
     }
-}
 
-fn factor(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (mut pos, mut expr) = unary(pos, tokens)?;
+    fn return_statement(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        let line = self.previous(tokens).line;
 
-    loop {
-        let advance_result = advance_on_match(
-            pos,
+        let value = if !self.check(tokens, discriminant(&Token::Semicolon)) {
+            let expr_result = self.expression(tokens)?;
+            Some(expr_result)
+        } else {
+            None
+        };
+
+        self.consume(
             tokens,
-            vec![discriminant(&Token::Star), discriminant(&Token::Slash)],
-        );
+            discriminant(&Token::Semicolon),
+            String::from("Expect ';' after return value."),
+        )?;
 
-        pos = advance_result.0;
-        let has_advanced = advance_result.1;
+        Ok(Stmt::Return { line, value })
+    }
+
+    fn expr_statement(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
+        let expr = self.expression(tokens)?;
+
+        self.consume(
+            tokens,
+            discriminant(&Token::Semicolon),
+            String::from("Expect ';' after expression."),
+        )?;
+
+        Ok(Stmt::Expr { expr })
+    }
+
+    fn expression(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        self.assignment(tokens)
+    }
+
+    fn assignment(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let expr = self.logic_or(tokens)?;
+
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Equal)]);
 
         if has_advanced {
-            let operator = previous(pos, tokens);
-            let comparison_result = comparison(pos, tokens)?;
-            pos = comparison_result.0;
-            let right = comparison_result.1;
-            expr = ExprInfo::binary(pos, expr, operator, right)?;
+            let equals_token = self.previous(tokens);
+            let value = self.assignment(tokens)?;
+
+            match *expr.expr {
+                Expr::Variable { name } => Ok(ExprInfo::assignment(name, expr.line, value)),
+                _ => Err(InterpreterError::parser_error(
+                    self.pos,
+                    equals_token,
+                    String::from("Invalid assignment target."),
+                )),
+            }
         } else {
-            break Ok((pos, expr));
+            Ok(expr)
         }
     }
-}
 
-fn unary(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (pos, has_advanced) = advance_on_match(
-        pos,
-        tokens,
-        vec![discriminant(&Token::Bang), discriminant(&Token::Minus)],
-    );
+    fn logic_or(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let mut expr = self.logic_and(tokens)?;
 
-    if has_advanced {
-        let operator = previous(pos, tokens);
-        let (pos, arg) = unary(pos, tokens)?;
-
-        ExprInfo::unary(pos, operator, arg).map(|expr| (pos, expr))
-    } else {
-        call(pos, tokens)
-    }
-}
-
-fn call(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (mut pos, mut expr) = primary(pos, tokens)?;
-
-    loop {
-        let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::LeftParen)]);
-
-        pos = advance_result.0;
-        let has_advanced = advance_result.1;
-
-        if has_advanced {
-            (pos, expr) = finish_call(pos, tokens, expr)?;
-        } else {
-            break Ok((pos, expr));
-        }
-    }
-}
-
-fn finish_call(pos: usize, tokens: &[TokenInfo], callee: ExprInfo) -> Result<(usize, ExprInfo)> {
-    let mut args = vec![];
-
-    let mut pos = pos;
-    if !check(pos, tokens, discriminant(&Token::RightParen)) {
         loop {
-            if args.len() >= 255 {
-                let warning = InterpreterError::parser_error(
-                    pos,
-                    peek(pos, tokens),
-                    String::from("Can't have more than 255 arguments."),
-                );
-                eprint!("{warning}");
-            }
+            let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Or)]);
 
-            let advance_result = expression(pos, tokens)?;
-            pos = advance_result.0;
-            args.push(advance_result.1);
-
-            let advance_result = advance_on_match(pos, tokens, vec![discriminant(&Token::Comma)]);
-
-            pos = advance_result.0;
-            let has_advanced = advance_result.1;
-            if !has_advanced {
-                break;
+            if has_advanced {
+                let operator = self.previous(tokens);
+                let comparison_result = self.logic_and(tokens)?;
+                let right = comparison_result;
+                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+            } else {
+                break Ok(expr);
             }
         }
     }
 
-    let (pos, paren) = consume(
-        pos,
-        tokens,
-        discriminant(&Token::RightParen),
-        String::from("Expect ')' after arguments."),
-    )?;
+    fn logic_and(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let mut expr = self.equality(tokens)?;
 
-    Ok((pos, ExprInfo::call(paren.line, callee, args)))
-}
+        loop {
+            let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::And)]);
 
-// TODO: refactor use one big match instead of multiple if-blocks
-fn primary(pos: usize, tokens: &[TokenInfo]) -> Result<(usize, ExprInfo)> {
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::False)]);
-    if has_advanced {
-        return Ok((
-            pos,
-            ExprInfo::new(
+            if has_advanced {
+                let operator = self.previous(tokens);
+                let comparison_result = self.equality(tokens)?;
+                let right = comparison_result;
+                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+            } else {
+                break Ok(expr);
+            }
+        }
+    }
+
+    fn equality(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let mut expr = self.comparison(tokens)?;
+
+        loop {
+            let has_advanced = self.advance_on_match(
+                tokens,
+                vec![
+                    discriminant(&Token::BangEqual),
+                    discriminant(&Token::EqualEqual),
+                ],
+            );
+
+            if has_advanced {
+                let operator = self.previous(tokens);
+                let comparison_result = self.comparison(tokens)?;
+                let right = comparison_result;
+                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+            } else {
+                break Ok(expr);
+            }
+        }
+    }
+
+    fn comparison(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let mut expr = self.term(tokens)?;
+
+        loop {
+            let has_advanced = self.advance_on_match(
+                tokens,
+                vec![
+                    discriminant(&Token::Greater),
+                    discriminant(&Token::GreaterEqual),
+                    discriminant(&Token::Less),
+                    discriminant(&Token::LessEqual),
+                ],
+            );
+
+            if has_advanced {
+                let operator = self.previous(tokens);
+                let comparison_result = self.comparison(tokens)?;
+                let right = comparison_result;
+                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+            } else {
+                break Ok(expr);
+            }
+        }
+    }
+
+    fn term(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let mut expr = self.factor(tokens)?;
+
+        loop {
+            let has_advanced = self.advance_on_match(
+                tokens,
+                vec![discriminant(&Token::Minus), discriminant(&Token::Plus)],
+            );
+
+            if has_advanced {
+                let operator = self.previous(tokens);
+                let comparison_result = self.comparison(tokens)?;
+                let right = comparison_result;
+                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+            } else {
+                break Ok(expr);
+            }
+        }
+    }
+
+    fn factor(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let mut expr = self.unary(tokens)?;
+
+        loop {
+            let has_advanced = self.advance_on_match(
+                tokens,
+                vec![discriminant(&Token::Star), discriminant(&Token::Slash)],
+            );
+
+            if has_advanced {
+                let operator = self.previous(tokens);
+                let comparison_result = self.comparison(tokens)?;
+                let right = comparison_result;
+                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+            } else {
+                break Ok(expr);
+            }
+        }
+    }
+
+    fn unary(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let has_advanced = self.advance_on_match(
+            tokens,
+            vec![discriminant(&Token::Bang), discriminant(&Token::Minus)],
+        );
+
+        if has_advanced {
+            let operator = self.previous(tokens);
+            let op_pos = self.pos;
+            let arg = self.unary(tokens)?;
+
+            ExprInfo::unary(op_pos, operator, arg)
+        } else {
+            self.call(tokens)
+        }
+    }
+
+    fn call(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let mut expr = self.primary(tokens)?;
+
+        loop {
+            let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::LeftParen)]);
+
+            if has_advanced {
+                expr = self.finish_call(tokens, expr)?;
+            } else {
+                break Ok(expr);
+            }
+        }
+    }
+
+    fn finish_call(&mut self, tokens: &[TokenInfo], callee: ExprInfo) -> Result<ExprInfo> {
+        let mut args = vec![];
+
+        if !self.check(tokens, discriminant(&Token::RightParen)) {
+            loop {
+                if args.len() >= 255 {
+                    let warning = InterpreterError::parser_error(
+                        self.pos,
+                        self.peek(tokens),
+                        String::from("Can't have more than 255 arguments."),
+                    );
+                    eprint!("{warning}");
+                    self.had_errors = true;
+                }
+
+                let arg = self.expression(tokens)?;
+                args.push(arg);
+
+                let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Comma)]);
+
+                if !has_advanced {
+                    break;
+                }
+            }
+        }
+
+        let paren = self.consume(
+            tokens,
+            discriminant(&Token::RightParen),
+            String::from("Expect ')' after arguments."),
+        )?;
+
+        Ok(ExprInfo::call(paren.line, callee, args))
+    }
+
+    // TODO: refactor use one big match instead of multiple if-blocks
+    fn primary(&mut self, tokens: &[TokenInfo]) -> Result<ExprInfo> {
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::False)]);
+        if has_advanced {
+            return Ok(ExprInfo::new(
                 Expr::Literal {
                     value: VariableValue::Boolean { value: false },
                 },
-                peek(pos, tokens).line,
-            ),
-        ));
-    }
+                self.peek(tokens).line,
+            ));
+        }
 
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::True)]);
-    if has_advanced {
-        return Ok((
-            pos,
-            ExprInfo::new(
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::True)]);
+        if has_advanced {
+            return Ok(ExprInfo::new(
                 Expr::Literal {
                     value: VariableValue::Boolean { value: true },
                 },
-                peek(pos, tokens).line,
-            ),
-        ));
-    }
+                self.peek(tokens).line,
+            ));
+        }
 
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::Nil)]);
-    if has_advanced {
-        return Ok((pos, ExprInfo::new(Expr::Nil, peek(pos, tokens).line)));
-    }
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Nil)]);
+        if has_advanced {
+            return Ok(ExprInfo::new(Expr::Nil, self.peek(tokens).line));
+        }
 
-    // string, number and identifier support
-    match &peek(pos, tokens).token {
-        Token::StrLiteral { lexeme: _, value } => {
-            let pos = advance(pos, tokens).0;
-            return Ok((
-                pos,
-                ExprInfo::new(
+        // string, number and identifier support
+        match &self.peek(tokens).token {
+            Token::StrLiteral { lexeme: _, value } => {
+                self.advance(tokens);
+                return Ok(ExprInfo::new(
                     Expr::Literal {
                         value: VariableValue::Str {
                             value: value.to_string(),
                         },
                     },
-                    peek(pos, tokens).line,
-                ),
-            ));
-        }
-        Token::NumLiteral { lexeme: _, value } => {
-            let pos = advance(pos, tokens).0;
-            return Ok((
-                pos,
-                ExprInfo::new(
+                    self.peek(tokens).line,
+                ));
+            }
+            Token::NumLiteral { lexeme: _, value } => {
+                self.advance(tokens);
+                return Ok(ExprInfo::new(
                     Expr::Literal {
                         value: VariableValue::Num { value: *value },
                     },
-                    peek(pos, tokens).line,
-                ),
-            ));
-        }
-        Token::Identifier { lexeme } => {
-            let pos = advance(pos, tokens).0;
-            return Ok((
-                pos,
-                ExprInfo::new(
+                    self.peek(tokens).line,
+                ));
+            }
+            Token::Identifier { lexeme } => {
+                self.advance(tokens);
+                return Ok(ExprInfo::new(
                     Expr::Variable {
                         name: String::from(lexeme),
                     },
-                    peek(pos, tokens).line,
-                ),
-            ));
+                    self.peek(tokens).line,
+                ));
+            }
+            _ => {}
         }
-        _ => {}
-    }
 
-    let (pos, has_advanced) = advance_on_match(pos, tokens, vec![discriminant(&Token::LeftParen)]);
-    let grouping_start_line = peek(pos, tokens).line;
-    if has_advanced {
-        let (pos, expr) = expression(pos, tokens)?;
+        let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::LeftParen)]);
+        let grouping_start_line = self.peek(tokens).line;
+        if has_advanced {
+            let expr = self.expression(tokens)?;
 
-        let pos = consume(
-            pos,
-            tokens,
-            discriminant(&Token::RightParen),
-            String::from("Expect ')' after expression."),
-        )?
-        .0;
+            self.consume(
+                tokens,
+                discriminant(&Token::RightParen),
+                String::from("Expect ')' after expression."),
+            )?;
 
-        return Ok((
-            pos,
-            ExprInfo::new(Expr::Grouping { expr }, grouping_start_line),
-        ));
-    }
+            return Ok(ExprInfo::new(Expr::Grouping { expr }, grouping_start_line));
+        }
 
-    Err(InterpreterError::parser_error(
-        pos,
-        peek(pos, tokens),
-        String::from("Expect expression."),
-    ))
-}
-
-fn consume(
-    pos: usize,
-    tokens: &[TokenInfo],
-    tpe: Discriminant<Token>,
-    error_message: String,
-) -> Result<(usize, &TokenInfo)> {
-    if check(pos, tokens, tpe) {
-        Ok(advance(pos, tokens))
-    } else {
         Err(InterpreterError::parser_error(
-            pos,
-            peek(pos, tokens),
-            error_message,
+            self.pos,
+            self.peek(tokens),
+            String::from("Expect expression."),
         ))
     }
-}
 
-fn advance_on_match(
-    pos: usize,
-    tokens: &[TokenInfo],
-    types: Vec<Discriminant<Token>>,
-) -> (usize, bool) {
-    let mut pos = pos;
-    for tpe in types {
-        if check(pos, tokens, tpe) {
-            pos = advance(pos, tokens).0;
-            return (pos, true);
+    fn consume<'a>(
+        &mut self,
+        tokens: &'a [TokenInfo],
+        tpe: Discriminant<Token>,
+        error_message: String,
+    ) -> Result<&'a TokenInfo> {
+        if self.check(tokens, tpe) {
+            Ok(self.advance(tokens))
+        } else {
+            Err(InterpreterError::parser_error(
+                self.pos,
+                self.peek(tokens),
+                error_message,
+            ))
         }
     }
 
-    (pos, false)
-}
+    fn advance_on_match(&mut self, tokens: &[TokenInfo], types: Vec<Discriminant<Token>>) -> bool {
+        for tpe in types {
+            if self.check(tokens, tpe) {
+                self.advance(tokens);
+                return true;
+            }
+        }
 
-fn check(pos: usize, tokens: &[TokenInfo], tpe: Discriminant<Token>) -> bool {
-    if is_at_end(pos, tokens) {
         false
-    } else {
-        discriminant(&peek(pos, tokens).token) == tpe
     }
-}
 
-fn advance(pos: usize, tokens: &[TokenInfo]) -> (usize, &TokenInfo) {
-    let pos = if !is_at_end(pos, tokens) {
-        pos + 1
-    } else {
-        pos
-    };
-    (pos, previous(pos, tokens))
-}
+    fn check(&mut self, tokens: &[TokenInfo], tpe: Discriminant<Token>) -> bool {
+        if self.is_at_end(tokens) {
+            false
+        } else {
+            discriminant(&self.peek(tokens).token) == tpe
+        }
+    }
 
-fn is_at_end(pos: usize, tokens: &[TokenInfo]) -> bool {
-    matches!(peek(pos, tokens).token, Token::Eof)
-}
+    fn advance<'a>(&mut self, tokens: &'a [TokenInfo]) -> &'a TokenInfo {
+        if !self.is_at_end(tokens) {
+            self.pos += 1
+        };
 
-fn peek(pos: usize, tokens: &[TokenInfo]) -> &TokenInfo {
-    &tokens[pos]
-}
+        self.previous(tokens)
+    }
 
-fn previous(pos: usize, tokens: &[TokenInfo]) -> &TokenInfo {
-    &tokens[pos - 1]
+    fn is_at_end(&self, tokens: &[TokenInfo]) -> bool {
+        matches!(self.peek(tokens).token, Token::Eof)
+    }
+
+    fn peek<'a>(&self, tokens: &'a [TokenInfo]) -> &'a TokenInfo {
+        &tokens[self.pos]
+    }
+
+    fn previous<'a>(&self, tokens: &'a [TokenInfo]) -> &'a TokenInfo {
+        &tokens[self.pos - 1]
+    }
+
+    // TODO: refactor
+    fn synchronize(&mut self, tokens: &[TokenInfo]) {
+        let mut token = self.advance(tokens);
+
+        while !self.is_at_end(tokens) {
+            if discriminant(&token.token) == STMT_END {
+                return;
+            }
+
+            match discriminant(&self.peek(tokens).token) {
+                t if STMT_START_TOKENS.contains(&t) => {
+                    return;
+                }
+                _ => {
+                    token = self.advance(tokens);
+                }
+            }
+        }
+    }
 }
 
 const STMT_END: Discriminant<Token> = discriminant(&Token::Semicolon);
@@ -868,24 +787,3 @@ const STMT_START_TOKENS: [Discriminant<Token>; 8] = [
     discriminant(&Token::Print),
     discriminant(&Token::Return),
 ];
-
-fn synchronize(pos: usize, tokens: &[TokenInfo]) -> usize {
-    let (mut pos, mut token) = advance(pos, tokens);
-
-    while !is_at_end(pos, tokens) {
-        if discriminant(&token.token) == STMT_END {
-            return pos;
-        }
-
-        match discriminant(&peek(pos, tokens).token) {
-            t if STMT_START_TOKENS.contains(&t) => {
-                return pos;
-            }
-            _ => {
-                (pos, token) = advance(pos, tokens);
-            }
-        }
-    }
-
-    pos
-}
