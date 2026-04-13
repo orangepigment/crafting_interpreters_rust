@@ -15,10 +15,11 @@ use crate::{interpreter::Interpreter, parser::Parser};
 
 fn run_file(filepath: &str) -> ExitCode {
     let program = fs::read_to_string(filepath).expect("Failed to read the source file");
-    run(program.as_str())
+    run(&mut Interpreter::new(), program.as_str())
 }
 
 fn run_prompt() {
+    let mut interpreter = Interpreter::new();
     let stdin = io::stdin();
     loop {
         print!("> ");
@@ -36,12 +37,14 @@ fn run_prompt() {
             println!("Bye-bye!");
             break;
         } else {
-            run(command);
+            run(&mut interpreter, command);
         }
     }
 }
 
-fn run(source: &str) -> ExitCode {
+// FIX: to keep env in REPL interpreter must be converted into a param
+// So declare it in the upper level
+fn run(interpreter: &mut Interpreter, source: &str) -> ExitCode {
     let Ok(tokens) = scanner::scan_tokens(source).inspect_err(|e| eprintln!("{e}")) else {
         return ExitCode::from(65);
     };
@@ -51,16 +54,13 @@ fn run(source: &str) -> ExitCode {
         return ExitCode::from(65);
     };
 
-    let mut interpreter = Interpreter::new();
-    interpreter
-        .interpret(&stmts)
-        .map_or_else(
-            |e| {
-                eprintln!("{e}");
-                ExitCode::from(70)
-            },
-            |_| ExitCode::SUCCESS,
-        )
+    interpreter.interpret(&stmts).map_or_else(
+        |e| {
+            eprintln!("{e}");
+            ExitCode::from(70)
+        },
+        |_| ExitCode::SUCCESS,
+    )
 }
 
 fn main() -> ExitCode {
