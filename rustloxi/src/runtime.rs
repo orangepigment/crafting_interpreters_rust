@@ -1,9 +1,8 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use crate::{
     ast::Stmt,
-    errors::{InterpreterError, Result},
-    interpreter::Interpreter,
+    errors::{InterpreterError, Result}
 };
 
 pub const CLOCK: VariableValue = VariableValue::Function {
@@ -50,46 +49,6 @@ pub enum LoxCallable {
 }
 
 impl LoxCallable {
-    pub fn call(
-        &mut self,
-        interpreter: &mut Interpreter,
-        line: u32,
-        args: &[VariableValue],
-    ) -> Result<VariableValue> {
-        match self {
-            LoxCallable::Function {
-                name: _,
-                params,
-                body,
-                closure,
-            } => {
-                // TODO: add local scope pointing to closure scope. Interpreter needs a special API for that?
-                interpreter.scope();
-                for (p, a) in std::iter::zip(params, args) {
-                    interpreter.define(*closure, p.to_string(), a.clone());
-                }
-
-                let result = match interpreter.execute_block(body) {
-                    Ok(_) => Ok(VariableValue::Nil),
-                    Err(InterpreterError::Return { value }) => Ok(value),
-                    Err(err) => Err(err),
-                };
-
-                interpreter.unscope();
-
-                result
-            }
-            LoxCallable::NativeClock => {
-                let now = std::time::SystemTime::now();
-                let seconds = now
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("SystemTime before UNIX EPOCH!")
-                    .as_secs_f64();
-
-                Ok(VariableValue::Num { value: seconds })
-            }
-        }
-    }
 
     pub fn arity(&self) -> usize {
         match self {
@@ -113,5 +72,104 @@ impl fmt::Display for VariableValue {
                 raw: LoxCallable::NativeClock,
             } => write!(f, "<native fn>"),
         }
+    }
+}
+
+// No field for tracking freed indices, because some left scopes could be captured into closures
+#[derive(Debug)]
+pub struct Environment {
+    scopes: Vec<Scope>,
+}
+
+#[derive(Debug)]
+struct Scope {
+    data: HashMap<String, VariableValue>,
+    parent: Option<usize>,
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        let mut globals = HashMap::new();
+        globals.insert(String::from("clock"), CLOCK);
+
+        let global_scope = Scope {
+            data: globals,
+            parent: None,
+        };
+
+        Environment {
+            scopes: vec![global_scope],
+        }
+    }
+
+    pub fn get(&self, scope_idx: usize, name: &str, line: u32) -> Result<&VariableValue> {
+        let mut scope_idx = scope_idx;
+
+        loop {
+            let scope = &self.scopes[scope_idx];
+            match scope.data.get(name) {
+                Some(value) => break Ok(value),
+                None => match scope.parent {
+                    Some(parent_idx) => {
+                        scope_idx = parent_idx;
+                    },
+                    None => {
+                        break Err(InterpreterError::runtime_error(
+                            line,
+                            format!("Undefined variable '{name}'."),
+                        ));
+                    }
+                },
+            }
+        }
+    }
+
+    pub fn define(&mut self, scope_idx: usize, name: String, value: VariableValue) {
+        self.scopes[scope_idx].data.insert(name, value);
+    }
+
+    pub fn assign(
+        &mut self,
+        scope_idx: usize,
+        name: String,
+        value: VariableValue,
+        line: u32,
+    ) -> Result<()> {
+        let mut scope_idx = scope_idx;
+
+        loop {
+            let scope = &mut self.scopes[scope_idx];
+            if scope.data.contains_key(name.as_str()) {
+                scope.data.insert(name, value);
+                break Ok(());
+            } else {
+                match scope.parent {
+                    Some(parent_idx) => {
+                        scope_idx = parent_idx;
+                    }
+                    None => {
+                        break Err(InterpreterError::runtime_error(
+                            line,
+                            format!("Undefined variable '{name}'."),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn scope(&mut self, parent_scope_idx: usize) -> usize {
+        let scope = Scope {
+            data: HashMap::new(),
+            parent: Some(parent_scope_idx),
+        };
+
+
+        self.scopes.push(scope);
+        self.scopes.len() - 1
+    }
+
+    pub fn unscope(&mut self, scope_idx: usize) -> usize {
+        self.scopes[scope_idx].parent.unwrap_or(0)
     }
 }

@@ -54,7 +54,6 @@ fn run(source: &str) -> ExitCode {
     let mut interpreter = Interpreter::new();
     interpreter
         .interpret(&stmts)
-        .inspect_err(|e| eprintln!("{e}"))
         .map_or_else(
             |e| {
                 eprintln!("{e}");

@@ -12,7 +12,7 @@ pub struct ExprInfo {
 }
 
 impl ExprInfo {
-    pub fn new(expr: Expr, line: u32) -> ExprInfo {
+    pub fn new(expr: Expr, line: u32) -> Self {
         ExprInfo {
             expr: Box::new(expr),
             line,

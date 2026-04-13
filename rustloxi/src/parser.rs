@@ -13,7 +13,7 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn new() -> Parser {
+    pub fn new() -> Self {
         Parser {
             pos: 0,
             had_errors: false,

@@ -1,85 +1,20 @@
-use std::collections::HashMap;
-
 use crate::errors::{InterpreterError, Result};
 
-use crate::runtime::{CLOCK, LoxCallable};
 use crate::{
     ast::{Expr, ExprInfo, Stmt},
-    runtime::VariableValue,
+    runtime::{Environment, LoxCallable, VariableValue},
 };
 
 pub struct Interpreter {
-    envs: Vec<HashMap<String, VariableValue>>,
+    env: Environment,
     scope: usize,
 }
 
 impl Interpreter {
-    pub fn new() -> Interpreter {
-        let mut globals = HashMap::new();
-        globals.insert(String::from("clock"), CLOCK);
+    pub fn new() -> Self {
+        let env = Environment::new();
 
-        Interpreter {
-            envs: vec![globals],
-            scope: 0,
-        }
-    }
-
-    fn get(&self, scope: usize, name: &str, line: u32) -> Result<VariableValue> {
-        let mut scope = scope;
-        loop {
-            match self.envs[scope].get(name) {
-                Some(value) => break Ok(value.clone()),
-                None => {
-                    if scope == 0 {
-                        break Err(InterpreterError::runtime_error(
-                            line,
-                            format!("Undefined variable '{name}'."),
-                        ));
-                    } else {
-                        scope -= 1;
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn define(&mut self, scope: usize, name: String, value: VariableValue) {
-        self.envs[scope].insert(name, value);
-    }
-
-    fn assign(
-        &mut self,
-        scope: usize,
-        name: String,
-        value: VariableValue,
-        line: u32,
-    ) -> Result<()> {
-        let mut scope = scope;
-        loop {
-            // We don't use Entry API to avoid cloning name
-            #[allow(clippy::map_entry)]
-            if self.envs[scope].contains_key(&name) {
-                self.envs[scope].insert(name, value);
-                break Ok(());
-            } else if scope == 0 {
-                break Err(InterpreterError::runtime_error(
-                    line,
-                    format!("Undefined variable '{name}'."),
-                ));
-            } else {
-                scope -= 1;
-            }
-        }
-    }
-
-    pub fn scope(&mut self) {
-        self.envs.push(HashMap::new());
-        self.scope += 1;
-    }
-
-    pub fn unscope(&mut self) {
-        self.envs.pop();
-        self.scope -= 1;
+        Interpreter { env, scope: 0 }
     }
 
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<()> {
@@ -88,7 +23,6 @@ impl Interpreter {
         }
 
         // We don't restore state and it allow us to save vars in REPL
-
         Ok(())
     }
 
@@ -110,15 +44,19 @@ impl Interpreter {
                     None => VariableValue::Nil,
                 };
 
-                self.define(self.scope, name.clone(), value);
+                self.env.define(self.scope, name.clone(), value);
 
                 Ok(())
             }
             Stmt::Block { statements } => {
-                self.scope();
-                self.execute_block(statements)?;
-                self.unscope();
-                Ok(())
+                self.scope = self.env.scope(self.scope);
+                self.execute_block(statements)
+                    .inspect(|_| {
+                        self.scope = self.env.unscope(self.scope);
+                    })
+                    .inspect_err(|_| {
+                        self.scope = self.env.unscope(self.scope);
+                    })
             }
             Stmt::If {
                 condition,
@@ -153,7 +91,7 @@ impl Interpreter {
                     body: body.to_vec(),
                     closure: self.scope,
                 };
-                self.define(
+                self.env.define(
                     self.scope,
                     name.to_string(),
                     VariableValue::Function { raw: function },
@@ -161,9 +99,7 @@ impl Interpreter {
 
                 Ok(())
             }
-            Stmt::Return { line, value } => {
-                // TODO: add Interpreter::ReturnErroe for unwinding. We don't need to return env from functions
-
+            Stmt::Return { line: _, value } => {
                 let value = match value {
                     Some(v) => self.evaluate_expr(v)?,
                     None => VariableValue::Nil,
@@ -174,9 +110,9 @@ impl Interpreter {
         }
     }
 
-    pub fn execute_block(&mut self, statements: &[Stmt]) -> Result<()> {
+    fn execute_block(&mut self, statements: &[Stmt]) -> Result<()> {
         for stmt in statements {
-            self.execute_stmt(stmt)?;
+            self.execute_stmt(stmt)?
         }
 
         Ok(())
@@ -187,10 +123,11 @@ impl Interpreter {
             Expr::Grouping { expr } => self.evaluate_expr(expr),
             Expr::Literal { value } => Ok(value.clone()),
             Expr::Nil => Ok(VariableValue::Nil),
-            Expr::Variable { name } => self.get(self.scope, name, expr.line),
+            Expr::Variable { name } => self.env.get(self.scope, name, expr.line).cloned(),
             Expr::Assignment { name, value } => {
                 let value = self.evaluate_expr(value)?;
-                self.assign(self.scope, name.clone(), value.clone(), expr.line)?;
+                self.env
+                    .assign(self.scope, name.clone(), value.clone(), expr.line)?;
 
                 Ok(value)
             }
@@ -327,7 +264,7 @@ impl Interpreter {
                     evaled_args.push(self.evaluate_expr(a)?);
                 }
 
-                let mut function = evaled_callee.into_function(callee.line)?;
+                let function = evaled_callee.into_function(callee.line)?;
 
                 if evaled_args.len() != function.arity() {
                     return Err(InterpreterError::runtime_error(
@@ -340,7 +277,54 @@ impl Interpreter {
                     ));
                 }
 
-                function.call(self, callee.line, &evaled_args)
+                self.execute_call(&function, callee.line, &evaled_args)
+            }
+        }
+    }
+
+    fn execute_call(
+        &mut self,
+        callable: &LoxCallable,
+        line: u32,
+        args: &[VariableValue],
+    ) -> Result<VariableValue> {
+        match callable {
+            LoxCallable::Function {
+                name: _,
+                params,
+                body,
+                closure,
+            } => {
+                let call_place_scope = self.scope;
+                self.scope = self.env.scope(*closure);
+
+                for (p, a) in std::iter::zip(params, args) {
+                    self.env.define(self.scope, p.to_string(), a.clone());
+                }
+
+                match self.execute_block(body).inspect_err(|_| {
+                    // Free call scope and return to call place scope
+                    self.env.unscope(self.scope);
+                    self.scope = call_place_scope;
+                }) {
+                    Ok(_) => {
+                        // Free call scope and return to call place scope
+                        self.env.unscope(self.scope);
+                        self.scope = call_place_scope;
+                        Ok(VariableValue::Nil)
+                    }
+                    Err(InterpreterError::Return { value }) => Ok(value),
+                    Err(err) => Err(err),
+                }
+            }
+            LoxCallable::NativeClock => {
+                let now = std::time::SystemTime::now();
+                let seconds = now
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("SystemTime before UNIX EPOCH!")
+                    .as_secs_f64();
+
+                Ok(VariableValue::Num { value: seconds })
             }
         }
     }

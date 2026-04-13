@@ -7,7 +7,7 @@ pub struct TokenInfo {
 }
 
 impl TokenInfo {
-    pub fn new(token: Token, line: u32) -> TokenInfo {
+    pub fn new(token: Token, line: u32) -> Self {
         TokenInfo { token, line }
     }
 }
