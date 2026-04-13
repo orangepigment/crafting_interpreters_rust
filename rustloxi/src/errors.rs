@@ -1,6 +1,9 @@
 use std::fmt;
 
-use crate::scanner::models::{Token, TokenInfo};
+use crate::{
+    runtime::VariableValue,
+    scanner::models::{Token, TokenInfo},
+};
 
 pub type Result<T> = std::result::Result<T, InterpreterError>;
 
@@ -25,6 +28,10 @@ pub enum InterpreterError {
     Runtime {
         line: u32,
         message: String,
+    },
+
+    Return {
+        value: VariableValue,
     },
 }
 
@@ -57,6 +64,10 @@ impl InterpreterError {
             message: String::from("Operands must be numbers."),
         }
     }
+
+    pub fn return_value(value: VariableValue) -> InterpreterError {
+        InterpreterError::Return { value }
+    }
 }
 
 // Generation of an error is completely separate from how it is displayed.
@@ -80,6 +91,9 @@ impl fmt::Display for InterpreterError {
             }
             InterpreterError::Runtime { line, message } => {
                 write!(f, "{message}\n[line {line}]")
+            }
+            InterpreterError::Return { value } => {
+                write!(f, "Return {value}")
             }
         }
     }

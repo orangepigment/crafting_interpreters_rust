@@ -20,9 +20,11 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# My helper script for runniong tests
-# It sets required env variables and starts "cargo test"
-run-tests.sh
+# Temporary and local files
+*.sh
+*.log
+*.nu
+*.nuon
 
 # Lox programs for manual testing
 *.lox

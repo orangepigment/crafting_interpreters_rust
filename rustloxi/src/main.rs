@@ -2,8 +2,8 @@ mod ast;
 mod errors;
 mod interpreter;
 mod parser;
+mod runtime;
 mod scanner;
-mod state;
 
 use std::{
     fs,
@@ -11,7 +11,7 @@ use std::{
     process::ExitCode,
 };
 
-use crate::interpreter::interpret;
+use crate::{interpreter::Interpreter, parser::Parser};
 
 fn run_file(filepath: &str) -> ExitCode {
     let program = fs::read_to_string(filepath).expect("Failed to read the source file");
@@ -46,12 +46,14 @@ fn run(source: &str) -> ExitCode {
         return ExitCode::from(65);
     };
 
-    let Some(stmts) = parser::parse(&tokens) else {
+    let mut parser = Parser::new();
+    let Some(stmts) = parser.parse(&tokens) else {
         return ExitCode::from(65);
     };
 
-    interpret(&stmts)
-        .inspect_err(|e| eprintln!("{e}"))
+    let mut interpreter = Interpreter::new();
+    interpreter
+        .interpret(&stmts)
         .map_or_else(
             |e| {
                 eprintln!("{e}");
