@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt};
 
 use crate::{
     ast::Stmt,
-    errors::{InterpreterError, Result}
+    errors::{InterpreterError, Result},
 };
 
 pub const CLOCK: VariableValue = VariableValue::Function {
@@ -41,7 +41,7 @@ impl VariableValue {
 pub enum LoxCallable {
     Function {
         name: String,
-        params: Vec<String>,
+        params: Vec<(u32, String)>,
         body: Vec<Stmt>,
         closure: usize, // Index of the captured env
     },
@@ -49,7 +49,6 @@ pub enum LoxCallable {
 }
 
 impl LoxCallable {
-
     pub fn arity(&self) -> usize {
         match self {
             LoxCallable::Function { params, .. } => params.len(),
@@ -112,12 +111,9 @@ impl Environment {
                 None => match scope.parent {
                     Some(parent_idx) => {
                         scope_idx = parent_idx;
-                    },
+                    }
                     None => {
-                        break Err(InterpreterError::runtime_error(
-                            line,
-                            format!("Undefined variable '{name}'."),
-                        ));
+                        break Err(InterpreterError::undefined_variable(line, name.to_string()));
                     }
                 },
             }
@@ -148,10 +144,7 @@ impl Environment {
                         scope_idx = parent_idx;
                     }
                     None => {
-                        break Err(InterpreterError::runtime_error(
-                            line,
-                            format!("Undefined variable '{name}'."),
-                        ));
+                        break Err(InterpreterError::undefined_variable(line, name));
                     }
                 }
             }
@@ -164,12 +157,55 @@ impl Environment {
             parent: Some(parent_scope_idx),
         };
 
-
         self.scopes.push(scope);
         self.scopes.len() - 1
     }
 
     pub fn unscope(&mut self, scope_idx: usize) -> usize {
         self.scopes[scope_idx].parent.unwrap_or(0)
+    }
+
+    pub fn get_at(
+        &self,
+        scope_idx: usize,
+        name: &str,
+        distance: usize,
+        line: u32,
+    ) -> Result<&VariableValue> {
+        let mut ancestor = Some(&self.scopes[scope_idx]);
+        for _ in 0..distance {
+            ancestor = ancestor.and_then(|s| s.parent.map(|p_idx| &self.scopes[p_idx]));
+        }
+
+        ancestor
+            .and_then(|s| s.data.get(name))
+            .ok_or_else(|| InterpreterError::undefined_variable(line, name.to_string()))
+    }
+
+    pub fn assign_at(
+        &mut self,
+        scope_idx: usize,
+        name: String,
+        value: VariableValue,
+        distance: usize,
+        line: u32,
+    ) -> Result<()> {
+        let mut ancestor = Some(&mut self.scopes[scope_idx]);
+        for _ in 0..distance {
+            match ancestor.and_then(|s| s.parent) {
+                Some(parent) => {
+                    ancestor = Some(&mut self.scopes[parent]);
+                }
+                None => return Err(InterpreterError::undefined_variable(line, name)),
+            }
+        }
+
+        match ancestor {
+            Some(anc) => {
+                anc.data.insert(name, value);
+                Ok(())
+            }
+            None => Err(InterpreterError::undefined_variable(line, name)),
+        }
     }
 }

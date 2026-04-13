@@ -9,11 +9,13 @@ use crate::{
 pub struct ExprInfo {
     pub expr: Box<Expr>,
     pub line: u32,
+    pub id: usize,
 }
 
 impl ExprInfo {
-    pub fn new(expr: Expr, line: u32) -> Self {
+    pub fn new(id: usize, expr: Expr, line: u32) -> Self {
         ExprInfo {
+            id,
             expr: Box::new(expr),
             line,
         }
@@ -21,32 +23,56 @@ impl ExprInfo {
 
     pub fn binary(
         pos: usize,
+        id: usize,
         left: ExprInfo,
         operator: &TokenInfo,
         right: ExprInfo,
     ) -> Result<ExprInfo> {
         match operator.token {
-            Token::EqualEqual => Ok(ExprInfo::new(Expr::Equals { left, right }, operator.line)),
+            Token::EqualEqual => Ok(ExprInfo::new(
+                id,
+                Expr::Equals { left, right },
+                operator.line,
+            )),
             Token::BangEqual => Ok(ExprInfo::new(
+                id,
                 Expr::NotEquals { left, right },
                 operator.line,
             )),
-            Token::Greater => Ok(ExprInfo::new(Expr::Greater { left, right }, operator.line)),
+            Token::Greater => Ok(ExprInfo::new(
+                id,
+                Expr::Greater { left, right },
+                operator.line,
+            )),
             Token::GreaterEqual => Ok(ExprInfo::new(
+                id,
                 Expr::GreaterEquals { left, right },
                 operator.line,
             )),
-            Token::Less => Ok(ExprInfo::new(Expr::Less { left, right }, operator.line)),
+            Token::Less => Ok(ExprInfo::new(id, Expr::Less { left, right }, operator.line)),
             Token::LessEqual => Ok(ExprInfo::new(
+                id,
                 Expr::LessEquals { left, right },
                 operator.line,
             )),
-            Token::Minus => Ok(ExprInfo::new(Expr::Minus { left, right }, operator.line)),
-            Token::Plus => Ok(ExprInfo::new(Expr::Plus { left, right }, operator.line)),
-            Token::Star => Ok(ExprInfo::new(Expr::Multiply { left, right }, operator.line)),
-            Token::Slash => Ok(ExprInfo::new(Expr::Divide { left, right }, operator.line)),
-            Token::Or => Ok(ExprInfo::new(Expr::Or { left, right }, operator.line)),
-            Token::And => Ok(ExprInfo::new(Expr::And { left, right }, operator.line)),
+            Token::Minus => Ok(ExprInfo::new(
+                id,
+                Expr::Minus { left, right },
+                operator.line,
+            )),
+            Token::Plus => Ok(ExprInfo::new(id, Expr::Plus { left, right }, operator.line)),
+            Token::Star => Ok(ExprInfo::new(
+                id,
+                Expr::Multiply { left, right },
+                operator.line,
+            )),
+            Token::Slash => Ok(ExprInfo::new(
+                id,
+                Expr::Divide { left, right },
+                operator.line,
+            )),
+            Token::Or => Ok(ExprInfo::new(id, Expr::Or { left, right }, operator.line)),
+            Token::And => Ok(ExprInfo::new(id, Expr::And { left, right }, operator.line)),
             _ => Err(InterpreterError::parser_error(
                 pos,
                 operator,
@@ -55,10 +81,14 @@ impl ExprInfo {
         }
     }
 
-    pub fn unary(pos: usize, operator: &TokenInfo, arg: ExprInfo) -> Result<ExprInfo> {
+    pub fn unary(pos: usize, id: usize, operator: &TokenInfo, arg: ExprInfo) -> Result<ExprInfo> {
         match operator.token {
-            Token::Bang => Ok(ExprInfo::new(Expr::Not { expr: arg }, operator.line)),
-            Token::Minus => Ok(ExprInfo::new(Expr::Negative { expr: arg }, operator.line)),
+            Token::Bang => Ok(ExprInfo::new(id, Expr::Not { expr: arg }, operator.line)),
+            Token::Minus => Ok(ExprInfo::new(
+                id,
+                Expr::Negative { expr: arg },
+                operator.line,
+            )),
             _ => Err(InterpreterError::parser_error(
                 pos,
                 operator,
@@ -67,12 +97,12 @@ impl ExprInfo {
         }
     }
 
-    pub fn assignment(name: String, line: u32, value: ExprInfo) -> ExprInfo {
-        ExprInfo::new(Expr::Assignment { name, value }, line)
+    pub fn assignment(id: usize, name: String, line: u32, value: ExprInfo) -> ExprInfo {
+        ExprInfo::new(id, Expr::Assignment { name, value }, line)
     }
 
-    pub fn call(line: u32, callee: ExprInfo, args: Vec<ExprInfo>) -> ExprInfo {
-        ExprInfo::new(Expr::Call { callee, args }, line)
+    pub fn call(line: u32, id: usize, callee: ExprInfo, args: Vec<ExprInfo>) -> ExprInfo {
+        ExprInfo::new(id, Expr::Call { callee, args }, line)
     }
 }
 
@@ -172,6 +202,7 @@ pub enum Stmt {
         expr: ExprInfo,
     },
     Var {
+        line: u32,
         name: String,
         initializer: Option<ExprInfo>,
     },
@@ -189,8 +220,9 @@ pub enum Stmt {
     },
 
     Function {
+        line: u32,
         name: String,
-        params: Vec<String>,
+        params: Vec<(u32, String)>,
         body: Vec<Stmt>,
     },
 

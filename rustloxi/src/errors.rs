@@ -33,14 +33,21 @@ pub enum InterpreterError {
     Return {
         value: VariableValue,
     },
+
+    Resolver {
+        line: u32,
+        location: String,
+        message: String,
+    },
 }
 
+// TODO: add more common errors constructors. Const errors should be made constants
 impl InterpreterError {
-    pub fn scanner_error(line: u32, message: String) -> InterpreterError {
+    pub fn scanner_error(line: u32, message: String) -> Self {
         Self::Scanner { line, message }
     }
 
-    pub fn parser_error(pos: usize, token: &TokenInfo, message: String) -> InterpreterError {
+    pub fn parser_error(pos: usize, token: &TokenInfo, message: String) -> Self {
         let location = match token.token {
             Token::Eof => String::from("end"),
             _ => format!("'{}'", token.token.lexeme()),
@@ -54,18 +61,46 @@ impl InterpreterError {
         }
     }
 
-    pub fn runtime_error(line: u32, message: String) -> InterpreterError {
+    pub fn self_ref_initializer(line: u32, location: String) -> Self {
+        InterpreterError::Resolver {
+            line,
+            location,
+            message: String::from("Can't read local variable in its own initializer."),
+        }
+    }
+
+    pub fn already_defined_variable(line: u32, location: String) -> Self {
+        InterpreterError::Resolver {
+            line,
+            location,
+            message: String::from("Already a variable with this name in this scope."),
+        }
+    }
+
+    pub fn top_level_return(line: u32, location: String) -> Self {
+        InterpreterError::Resolver {
+            line,
+            location,
+            message: String::from("Can't return from top-level code."),
+        }
+    }
+
+    pub fn runtime_error(line: u32, message: String) -> Self {
         InterpreterError::Runtime { line, message }
     }
 
-    pub fn operands_must_be_numbers_error(line: u32) -> InterpreterError {
+    pub fn undefined_variable(line: u32, var_name: String) -> Self {
+        InterpreterError::runtime_error(line, format!("Undefined variable '{var_name}'."))
+    }
+
+    pub fn operands_must_be_numbers_error(line: u32) -> Self {
         InterpreterError::Runtime {
             line,
             message: String::from("Operands must be numbers."),
         }
     }
 
-    pub fn return_value(value: VariableValue) -> InterpreterError {
+    pub fn return_value(value: VariableValue) -> Self {
         InterpreterError::Return { value }
     }
 }
@@ -94,6 +129,13 @@ impl fmt::Display for InterpreterError {
             }
             InterpreterError::Return { value } => {
                 write!(f, "Return {value}")
+            }
+            InterpreterError::Resolver {
+                line,
+                message,
+                location,
+            } => {
+                write!(f, "[line {line}] Error at {location}: {message}")
             }
         }
     }

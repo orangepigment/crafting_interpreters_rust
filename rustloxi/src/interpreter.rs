@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::errors::{InterpreterError, Result};
 
 use crate::{
@@ -8,13 +10,18 @@ use crate::{
 pub struct Interpreter {
     env: Environment,
     scope: usize,
+    locals: HashMap<usize, usize>, // Expr Id -> scope depth
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         let env = Environment::new();
 
-        Interpreter { env, scope: 0 }
+        Interpreter {
+            env,
+            scope: 0,
+            locals: HashMap::new(),
+        }
     }
 
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<()> {
@@ -24,6 +31,13 @@ impl Interpreter {
 
         // We don't restore state and it allow us to save vars in REPL
         Ok(())
+    }
+
+    pub fn resolve(&mut self, expr: &ExprInfo, depth: usize) {
+        // TODO: An unique id can be assigned to each AST node
+        // Probaby it should be parser responsibility?
+        //   In practice expr is either variable or assignment
+        self.locals.insert(expr.id, depth);
     }
 
     fn execute_stmt(&mut self, stmt: &Stmt) -> Result<()> {
@@ -38,7 +52,11 @@ impl Interpreter {
 
                 Ok(())
             }
-            Stmt::Var { name, initializer } => {
+            Stmt::Var {
+                name,
+                initializer,
+                line: _,
+            } => {
                 let value = match initializer {
                     Some(i) => self.evaluate_expr(i)?,
                     None => VariableValue::Nil,
@@ -84,7 +102,12 @@ impl Interpreter {
 
                 Ok(())
             }
-            Stmt::Function { name, params, body } => {
+            Stmt::Function {
+                name,
+                params,
+                body,
+                line: _,
+            } => {
                 let function = LoxCallable::Function {
                     name: name.to_string(),
                     params: params.to_vec(),
@@ -123,11 +146,23 @@ impl Interpreter {
             Expr::Grouping { expr } => self.evaluate_expr(expr),
             Expr::Literal { value } => Ok(value.clone()),
             Expr::Nil => Ok(VariableValue::Nil),
-            Expr::Variable { name } => self.env.get(self.scope, name, expr.line).cloned(),
+            Expr::Variable { name } => self.lookup_variable(name, expr.id, expr.line).cloned(),
             Expr::Assignment { name, value } => {
                 let value = self.evaluate_expr(value)?;
-                self.env
-                    .assign(self.scope, name.clone(), value.clone(), expr.line)?;
+
+                match self.locals.get(&expr.id) {
+                    Some(distance) => self.env.assign_at(
+                        self.scope,
+                        name.clone(),
+                        value.clone(),
+                        *distance,
+                        expr.line,
+                    )?,
+                    None => self.env.assign(0, name.clone(), value.clone(), expr.line)?,
+                };
+
+                // self.env
+                //     .assign(self.scope, name.clone(), value.clone(), expr.line)?;
 
                 Ok(value)
             }
@@ -298,7 +333,7 @@ impl Interpreter {
                 let call_place_scope = self.scope;
                 self.scope = self.env.scope(*closure);
 
-                for (p, a) in std::iter::zip(params, args) {
+                for ((_, p), a) in std::iter::zip(params, args) {
                     self.env.define(self.scope, p.to_string(), a.clone());
                 }
 
@@ -326,6 +361,13 @@ impl Interpreter {
 
                 Ok(VariableValue::Num { value: seconds })
             }
+        }
+    }
+
+    fn lookup_variable(&self, name: &str, expr_id: usize, line: u32) -> Result<&VariableValue> {
+        match self.locals.get(&expr_id) {
+            Some(distance) => self.env.get_at(self.scope, name, *distance, line),
+            None => self.env.get(0, name, line),
         }
     }
 }
