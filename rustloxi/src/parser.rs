@@ -10,6 +10,7 @@ use crate::{
 pub struct Parser {
     pos: usize,
     had_errors: bool,
+    expr_node_id: usize,
 }
 
 impl Parser {
@@ -17,6 +18,7 @@ impl Parser {
         Parser {
             pos: 0,
             had_errors: false,
+            expr_node_id: 0,
         }
     }
 
@@ -64,7 +66,7 @@ impl Parser {
     }
 
     fn var_declaration(&mut self, tokens: &[TokenInfo]) -> Result<Stmt> {
-        let name = self.consume(
+        let name_token = self.consume(
             tokens,
             // discriminant ignores values
             discriminant(&Token::Identifier {
@@ -72,7 +74,7 @@ impl Parser {
             }),
             String::from("Expect variable name."),
         )?;
-        let name = name.token.lexeme().to_string();
+        let name = name_token.token.lexeme().to_string();
 
         let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Equal)]);
 
@@ -80,11 +82,13 @@ impl Parser {
             let expr_result = self.expression(tokens)?;
 
             Stmt::Var {
+                line: name_token.line,
                 name,
                 initializer: Some(expr_result),
             }
         } else {
             Stmt::Var {
+                line: name_token.line,
                 name,
                 initializer: None,
             }
@@ -163,10 +167,11 @@ impl Parser {
 
         let params = params
             .iter()
-            .map(|p| p.token.lexeme().to_string())
+            .map(|p| (p.line, p.token.lexeme().to_string()))
             .collect();
 
         Ok(Stmt::Function {
+            line: name.line,
             name: name.token.lexeme().to_string(),
             params,
             body,
@@ -352,6 +357,7 @@ impl Parser {
         }
 
         let condition = condition.unwrap_or(ExprInfo::new(
+            self.next_expr_id(),
             Expr::Literal {
                 value: VariableValue::Boolean { value: true },
             },
@@ -417,7 +423,12 @@ impl Parser {
             let value = self.assignment(tokens)?;
 
             match *expr.expr {
-                Expr::Variable { name } => Ok(ExprInfo::assignment(name, expr.line, value)),
+                Expr::Variable { name } => Ok(ExprInfo::assignment(
+                    self.next_expr_id(),
+                    name,
+                    expr.line,
+                    value,
+                )),
                 _ => Err(InterpreterError::parser_error(
                     self.pos,
                     equals_token,
@@ -439,7 +450,7 @@ impl Parser {
                 let operator = self.previous(tokens);
                 let comparison_result = self.logic_and(tokens)?;
                 let right = comparison_result;
-                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+                expr = ExprInfo::binary(self.pos, self.next_expr_id(), expr, operator, right)?;
             } else {
                 break Ok(expr);
             }
@@ -456,7 +467,7 @@ impl Parser {
                 let operator = self.previous(tokens);
                 let comparison_result = self.equality(tokens)?;
                 let right = comparison_result;
-                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+                expr = ExprInfo::binary(self.pos, self.next_expr_id(), expr, operator, right)?;
             } else {
                 break Ok(expr);
             }
@@ -479,7 +490,7 @@ impl Parser {
                 let operator = self.previous(tokens);
                 let comparison_result = self.comparison(tokens)?;
                 let right = comparison_result;
-                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+                expr = ExprInfo::binary(self.pos, self.next_expr_id(), expr, operator, right)?;
             } else {
                 break Ok(expr);
             }
@@ -504,7 +515,7 @@ impl Parser {
                 let operator = self.previous(tokens);
                 let comparison_result = self.comparison(tokens)?;
                 let right = comparison_result;
-                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+                expr = ExprInfo::binary(self.pos, self.next_expr_id(), expr, operator, right)?;
             } else {
                 break Ok(expr);
             }
@@ -524,7 +535,7 @@ impl Parser {
                 let operator = self.previous(tokens);
                 let comparison_result = self.comparison(tokens)?;
                 let right = comparison_result;
-                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+                expr = ExprInfo::binary(self.pos, self.next_expr_id(), expr, operator, right)?;
             } else {
                 break Ok(expr);
             }
@@ -544,7 +555,7 @@ impl Parser {
                 let operator = self.previous(tokens);
                 let comparison_result = self.comparison(tokens)?;
                 let right = comparison_result;
-                expr = ExprInfo::binary(self.pos, expr, operator, right)?;
+                expr = ExprInfo::binary(self.pos, self.next_expr_id(), expr, operator, right)?;
             } else {
                 break Ok(expr);
             }
@@ -562,7 +573,7 @@ impl Parser {
             let op_pos = self.pos;
             let arg = self.unary(tokens)?;
 
-            ExprInfo::unary(op_pos, operator, arg)
+            ExprInfo::unary(op_pos, self.next_expr_id(), operator, arg)
         } else {
             self.call(tokens)
         }
@@ -614,7 +625,12 @@ impl Parser {
             String::from("Expect ')' after arguments."),
         )?;
 
-        Ok(ExprInfo::call(paren.line, callee, args))
+        Ok(ExprInfo::call(
+            paren.line,
+            self.next_expr_id(),
+            callee,
+            args,
+        ))
     }
 
     // TODO: refactor use one big match instead of multiple if-blocks
@@ -622,6 +638,7 @@ impl Parser {
         let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::False)]);
         if has_advanced {
             return Ok(ExprInfo::new(
+                self.next_expr_id(),
                 Expr::Literal {
                     value: VariableValue::Boolean { value: false },
                 },
@@ -632,6 +649,7 @@ impl Parser {
         let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::True)]);
         if has_advanced {
             return Ok(ExprInfo::new(
+                self.next_expr_id(),
                 Expr::Literal {
                     value: VariableValue::Boolean { value: true },
                 },
@@ -641,7 +659,11 @@ impl Parser {
 
         let has_advanced = self.advance_on_match(tokens, vec![discriminant(&Token::Nil)]);
         if has_advanced {
-            return Ok(ExprInfo::new(Expr::Nil, self.peek(tokens).line));
+            return Ok(ExprInfo::new(
+                self.next_expr_id(),
+                Expr::Nil,
+                self.peek(tokens).line,
+            ));
         }
 
         // string, number and identifier support
@@ -649,6 +671,7 @@ impl Parser {
             Token::StrLiteral { lexeme: _, value } => {
                 self.advance(tokens);
                 return Ok(ExprInfo::new(
+                    self.next_expr_id(),
                     Expr::Literal {
                         value: VariableValue::Str {
                             value: value.to_string(),
@@ -660,6 +683,7 @@ impl Parser {
             Token::NumLiteral { lexeme: _, value } => {
                 self.advance(tokens);
                 return Ok(ExprInfo::new(
+                    self.next_expr_id(),
                     Expr::Literal {
                         value: VariableValue::Num { value: *value },
                     },
@@ -669,6 +693,7 @@ impl Parser {
             Token::Identifier { lexeme } => {
                 self.advance(tokens);
                 return Ok(ExprInfo::new(
+                    self.next_expr_id(),
                     Expr::Variable {
                         name: String::from(lexeme),
                     },
@@ -689,7 +714,11 @@ impl Parser {
                 String::from("Expect ')' after expression."),
             )?;
 
-            return Ok(ExprInfo::new(Expr::Grouping { expr }, grouping_start_line));
+            return Ok(ExprInfo::new(
+                self.next_expr_id(),
+                Expr::Grouping { expr },
+                grouping_start_line,
+            ));
         }
 
         Err(InterpreterError::parser_error(
@@ -773,6 +802,11 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn next_expr_id(&mut self) -> usize {
+        self.expr_node_id += 1;
+        self.expr_node_id
     }
 }
 

@@ -2,6 +2,7 @@ mod ast;
 mod errors;
 mod interpreter;
 mod parser;
+mod resolver;
 mod runtime;
 mod scanner;
 
@@ -11,7 +12,7 @@ use std::{
     process::ExitCode,
 };
 
-use crate::{interpreter::Interpreter, parser::Parser};
+use crate::{interpreter::Interpreter, parser::Parser, resolver::Resolver};
 
 fn run_file(filepath: &str) -> ExitCode {
     let program = fs::read_to_string(filepath).expect("Failed to read the source file");
@@ -42,8 +43,6 @@ fn run_prompt() {
     }
 }
 
-// FIX: to keep env in REPL interpreter must be converted into a param
-// So declare it in the upper level
 fn run(interpreter: &mut Interpreter, source: &str) -> ExitCode {
     let Ok(tokens) = scanner::scan_tokens(source).inspect_err(|e| eprintln!("{e}")) else {
         return ExitCode::from(65);
@@ -53,6 +52,12 @@ fn run(interpreter: &mut Interpreter, source: &str) -> ExitCode {
     let Some(stmts) = parser.parse(&tokens) else {
         return ExitCode::from(65);
     };
+
+    let mut resolver = Resolver::new(interpreter);
+    resolver.resolve(&stmts);
+    if resolver.had_errors() {
+        return ExitCode::from(65);
+    }
 
     interpreter.interpret(&stmts).map_or_else(
         |e| {
